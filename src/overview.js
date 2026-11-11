@@ -20,6 +20,7 @@
     await pca.handleRedirectPromise();
     $("signinBtn").onclick = addAccount;
     $("addAccountBtn").onclick = addAccount;
+    $("gmailBtn").onclick = connectGmail;
     $("syncBtn").onclick = function () { syncAll(); };
     setup();
     if (engines.length) syncAll();
@@ -72,6 +73,25 @@
     }
   }
 
+  async function connectGmail() {
+    var link = prompt("Paste the connection link from your Gmail script (it starts with https://script.google.com/…):");
+    if (!link) return;
+    link = link.trim();
+    if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(link) || link.indexOf("key=") < 0) { status("That doesn't look like the connection link from the script.", true); return; }
+    var host = engines.find(function (x) { return /@imagebuilding\.com$/i.test(x.account.username); }) || engines[0];
+    status("Connecting Gmail… reminders will go to the calendar of " + host.account.username);
+    try { await host.engine.setGmail(link, true); } catch (e) { status(e.message, true); return; }
+    await syncAll();
+  }
+
+  async function disconnectGmail() {
+    var host = gmailHost();
+    if (!host || !confirm("Disconnect Gmail? Its reminders are removed from your calendar. (Labels in Gmail stay.)")) return;
+    status("Disconnecting Gmail…");
+    try { await host.engine.setGmail(null, true); status(""); } catch (e) { status(e.message, true); }
+    renderAccounts(); render();
+  }
+
   function addAccount() {
     pca.loginRedirect({ scopes: cfg.scopes, prompt: "select_account" });
   }
@@ -122,10 +142,22 @@
       chip.querySelector(".rm").onclick = function () { removeAccount(x.account); };
       box.appendChild(chip);
     });
+    var g = gmailSource();
+    if (g) {
+      var gc = document.createElement("span");
+      gc.className = "chip" + (g.error ? " err" : "");
+      gc.innerHTML = '<span class="dot"></span><span class="n"></span><button class="rm" title="Disconnect Gmail">✕</button>';
+      gc.querySelector(".dot").style.background = g.color;
+      gc.querySelector(".n").textContent = g.account.username + " · Gmail" + (g.error ? " — " + g.error : "");
+      gc.querySelector(".rm").onclick = disconnectGmail;
+      box.appendChild(gc);
+    }
+    $("gmailBtn").classList.toggle("hidden", !!gmailHost() || !engines.length);
     var f = $("filters");
     f.innerHTML = "";
-    if (engines.length < 2) return;
-    [{ k: "all", label: "All" }].concat(engines.map(function (x) { return { k: x.account.username, label: x.account.username.split("@")[1] || x.account.username }; }))
+    var srcs = sources();
+    if (srcs.length < 2) return;
+    [{ k: "all", label: "All" }].concat(srcs.map(function (x) { return { k: x.account.username, label: x.account.username.split("@")[1] || x.account.username }; }))
       .forEach(function (o) {
         var b = document.createElement("button");
         b.textContent = o.label;
@@ -148,11 +180,38 @@
     return "Checking…";
   }
 
+  /** The engine that holds the Gmail link (its calendar gets the Gmail reminders). */
+  function gmailHost() {
+    return engines.find(function (x) { return !!x.engine.load().settings.gmail; }) || null;
+  }
+  function gmailSource() {
+    var host = gmailHost();
+    var g = host && host.engine.gmail();
+    if (!host || !g) return null;
+    return {
+      account: { username: g.account || "Gmail" }, color: "#d93025", gmail: true, host: host,
+      items: (g.items || []).map(function (it) { return Object.assign({ c: it.id }, it); }),
+      error: g.error,
+      setDone: function (id, done) { return host.engine.gmailAction(id, done ? "done" : "undone", true); },
+      untrack: function (id) { return host.engine.gmailAction(id, "untrack", true); }
+    };
+  }
+  function sources() {
+    var list = engines.map(function (x) {
+      return { account: x.account, color: x.color, items: x.engine.load().items,
+        setDone: function (c, done) { return x.engine.setDone(c, done, true); },
+        untrack: function (c) { return x.engine.untrack(c, true); } };
+    });
+    var g = gmailSource();
+    if (g) list.push(g);
+    return list;
+  }
+
   function render() {
     var all = [];
-    engines.forEach(function (x) {
+    sources().forEach(function (x) {
       if (filter !== "all" && filter !== x.account.username) return;
-      x.engine.load().items.forEach(function (e) { all.push({ e: e, x: x }); });
+      x.items.forEach(function (e) { all.push({ e: e, x: x }); });
     });
     var waiting = all.filter(function (r) { return r.e.st !== "answered"; })
       .sort(function (a, b) { return new Date(a.e.d || 8.64e15) - new Date(b.e.d || 8.64e15); });
@@ -180,7 +239,7 @@
       a.textContent = e.s || "(no subject)";
       if (e.w) a.href = e.w; else a.removeAttribute("href");
       var meta = li.querySelector(".meta");
-      if (engines.length > 1) {
+      if (sources().length > 1) {
         var tag = document.createElement("span"); tag.className = "tag"; tag.style.background = x.color;
         tag.textContent = x.account.username.split("@")[1] || x.account.username;
         meta.appendChild(tag);
@@ -196,7 +255,7 @@
         var btn = ev.currentTarget; btn.disabled = true; btn.textContent = done ? "" : "✓";
         status(done ? "Moving back to waiting…" : "Marking as done…");
         try {
-          await x.engine.setDone(e.c, !done, true);
+          await x.setDone(e.c, !done);
           status("");
         } catch (err) { status(err.message, true); }
         render();
@@ -204,7 +263,7 @@
       li.querySelector(".x").onclick = async function () {
         if (!confirm("Stop tracking “" + (e.s || "this email") + "”?")) return;
         status("Removing…");
-        try { await x.engine.untrack(e.c, true); status(""); } catch (err) { status(err.message, true); }
+        try { await x.untrack(e.c); status(""); } catch (err) { status(err.message, true); }
         render();
       };
       ul.appendChild(li);

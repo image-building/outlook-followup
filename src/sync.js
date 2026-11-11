@@ -93,7 +93,7 @@ window.FUEngine = function (opts) {
   }
   async function writeMailboxSettings(settings, interactive) {
     await graph("PATCH", "/me/mailFolders/msgfolderroot", {
-      singleValueExtendedProperties: [{ id: SETTINGS_PROP, value: JSON.stringify({ days: settings.days, reminderTime: settings.reminderTime }) }]
+      singleValueExtendedProperties: [{ id: SETTINGS_PROP, value: JSON.stringify({ days: settings.days, reminderTime: settings.reminderTime, gmail: settings.gmail || null }) }]
     }, interactive);
   }
 
@@ -288,8 +288,9 @@ window.FUEngine = function (opts) {
     var start = new Date(Date.now() - 60 * 86400000).toISOString();
     var end = new Date(Date.now() + 130 * 86400000).toISOString();
     var url = "/me/calendarView?startDateTime=" + start + "&endDateTime=" + end +
-      "&$select=id,subject,categories,body&$top=200&$expand=singleValueExtendedProperties($filter=" + encodeURIComponent("id eq '" + CONV_PROP + "'") + ")";
+      "&$select=id,subject,categories,body,start&$top=200&$expand=singleValueExtendedProperties($filter=" + encodeURIComponent("id eq '" + CONV_PROP + "'") + ")";
     var map = {};
+    extEvents = {};
     var pages = 0;
     while (url && pages++ < 10) {
       var res = await graph("GET", url, null, interactive);
@@ -298,6 +299,10 @@ window.FUEngine = function (opts) {
         if ((ev.categories || []).indexOf(cfg.category) < 0 || !/^Follow up: /.test(ev.subject || "")) continue;
         var prop = (ev.singleValueExtendedProperties || [])[0];
         var conv = prop && prop.value;
+        if (conv && conv.indexOf("gmail:") === 0) { // reminder for a Gmail follow-up
+          (extEvents[conv] = extEvents[conv] || []).push({ id: ev.id, start: ev.start && ev.start.dateTime ? ev.start.dateTime.replace(/(\.\d{3})\d*/, "$1").replace(/Z?$/, "Z") : null });
+          continue;
+        }
         if (!conv) conv = await conversationFromEventBody(ev, interactive); // reminders made by version 1.0–1.2
         if (!conv) continue;
         (map[conv] = map[conv] || []).push(ev.id);
@@ -332,6 +337,79 @@ window.FUEngine = function (opts) {
       }
     } catch (e) { /* give up */ }
     return null;
+  }
+
+  /* ---------- Gmail (via your Apps Script) ---------- */
+  var extEvents = {};
+  var lastGmail = null; // { account, items, error }
+
+  async function gmailCall(link, params) {
+    var url = link + (link.indexOf("?") >= 0 ? "&" : "?") + Object.keys(params || {}).map(function (k) { return k + "=" + encodeURIComponent(params[k]); }).join("&") + "&_=" + Date.now();
+    var res = await fetch(url, { redirect: "follow" });
+    var text = await res.text();
+    var json;
+    try { json = JSON.parse(text); } catch (e) { throw new Error("Gmail script didn't answer (check that it is deployed with access 'Anyone')."); }
+    if (!json.ok) throw new Error("Gmail: " + (json.error || "unknown error"));
+    return json;
+  }
+
+  function gmailReminder(item, due) {
+    var end = new Date(new Date(due).getTime() + 15 * 60000).toISOString();
+    return {
+      subject: "Follow up: " + (item.s || "(no subject)"),
+      body: { contentType: "HTML", content: "<p>No reply yet to your Gmail email <b>" + escapeHtml(item.s || "") + "</b>" + (lastGmail && lastGmail.account ? " (" + escapeHtml(lastGmail.account) + ")" : "") + ".</p>" +
+        (item.w ? '<p><a href="' + item.w + '">Open in Gmail</a></p>' : "") + "<p><i>Created by the Follow-up add-in. It is removed automatically when a reply arrives.</i></p>" },
+      start: utc(due), end: utc(end), isReminderOn: true, reminderMinutesBeforeStart: 0, showAs: "free", categories: [cfg.category],
+      singleValueExtendedProperties: [{ id: CONV_PROP, value: "gmail:" + item.id }]
+    };
+  }
+
+  /** Fetches your Gmail follow-ups and keeps their reminders in this mailbox's calendar in line. */
+  async function syncGmail(data, interactive, fresh) {
+    var link = data.settings.gmail;
+    if (!link) { lastGmail = null; return; }
+    var result;
+    try { result = fresh || await gmailCall(link, {}); }
+    catch (e) { lastGmail = { error: e.message, items: (lastGmail && lastGmail.items) || [] }; return; }
+    lastGmail = { account: result.account, items: result.items || [], lastRun: result.lastRun };
+    var days = Number(data.settings.days) || 14, hhmm = data.settings.reminderTime;
+    var want = {};
+    lastGmail.items.forEach(function (it) {
+      if (it.st === "waiting" && it.a) { it.d = FUCore.reminderMoment(it.a, days, hhmm); want["gmail:" + it.id] = it; }
+    });
+    var keys = Object.keys(want).concat(Object.keys(extEvents)).filter(function (k, i, arr) { return arr.indexOf(k) === i; });
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i], it = want[k], evs = extEvents[k] || [];
+      if (!it) { for (var j = 0; j < evs.length; j++) await graph("DELETE", "/me/events/" + evs[j].id, null, interactive); continue; }
+      if (!evs.length) { await graph("POST", "/me/events", gmailReminder(it, it.d), interactive); continue; }
+      var first = evs[0];
+      if (!first.start || Math.abs(new Date(first.start) - new Date(it.d)) > 60000) await graph("PATCH", "/me/events/" + first.id, gmailReminder(it, it.d), interactive);
+      for (var x = 1; x < evs.length; x++) await graph("DELETE", "/me/events/" + evs[x].id, null, interactive);
+    }
+  }
+
+  /** action: 'done' | 'undone' | 'untrack' on a Gmail thread, then refresh reminders. */
+  async function gmailAction(threadId, action, interactive) {
+    var data = load();
+    var link = data.settings.gmail;
+    if (!link) throw new Error("Gmail isn't connected.");
+    var fresh = await gmailCall(link, { action: action, id: threadId });
+    await reminderEvents({ items: [], ignored: [] }, interactive); // refresh the list of Gmail reminders
+    await syncGmail(data, interactive, fresh);
+  }
+
+  async function setGmail(link, interactive) {
+    var data = load();
+    if (link) await gmailCall(link, {}); // test it first
+    data.settings.gmail = link || null;
+    await writeMailboxSettings(data.settings, interactive);
+    await save(data);
+    if (!link) { // remove leftover Gmail reminders
+      await reminderEvents({ items: [], ignored: [] }, interactive);
+      var ks = Object.keys(extEvents);
+      for (var i = 0; i < ks.length; i++) for (var j = 0; j < extEvents[ks[i]].length; j++) await graph("DELETE", "/me/events/" + extEvents[ks[i]][j].id, null, interactive);
+      lastGmail = null;
+    }
   }
 
   var running = null;
@@ -376,6 +454,8 @@ window.FUEngine = function (opts) {
             errors.push((entry.s || "email") + ": " + e.message);
           }
         }
+        try { await syncGmail(data, interactive); } catch (e) { if (e.code === "SIGNIN_REQUIRED") throw e; errors.push("Gmail: " + e.message); }
+        if (lastGmail && lastGmail.error) errors.push(lastGmail.error);
         var cutoff = Date.now() - PRUNE_ANSWERED_DAYS * 86400000;
         data.items = keep.filter(function (e) { return !(e.st === "answered" && new Date(e.t).getTime() < cutoff); });
         data.v = STORE_VERSION;
@@ -476,5 +556,6 @@ window.FUEngine = function (opts) {
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
   return { load: load, setDone: setDone, syncAll: syncAll, track: track, untrack: untrack, saveSettings: saveSettings,
-    settings: settings, whoAmI: whoAmI, ensureCategory: ensureCategory, graph: graph };
+    settings: settings, whoAmI: whoAmI, ensureCategory: ensureCategory, graph: graph,
+    gmail: function () { return lastGmail; }, gmailAction: gmailAction, setGmail: setGmail };
 };
