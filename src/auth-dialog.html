@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sign in</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="lib/msal-browser.min.js"></script>
+  <script src="config.js"></script>
+</head>
+<body style="font-family: Segoe UI, -apple-system, sans-serif; padding: 24px;">
+  <p id="msg">Signing you in to Microsoft 365…</p>
+  <script>
+    (function () {
+      var cfg = window.FU_CONFIG;
+      var pca = new msal.PublicClientApplication({
+        auth: { clientId: cfg.clientId, authority: cfg.authority, redirectUri: cfg.baseUrl + "/src/auth-dialog.html" },
+        cache: { cacheLocation: "localStorage" }
+      });
+      function send(obj) { Office.context.ui.messageParent(JSON.stringify(obj)); }
+      Office.onReady(async function () {
+        try {
+          await pca.initialize();
+          var result = await pca.handleRedirectPromise();
+          var account = (result && result.account) || pca.getAllAccounts()[0];
+          if (!account) return pca.loginRedirect({ scopes: cfg.scopes });
+          var tok = result && result.accessToken ? result :
+            await pca.acquireTokenSilent({ scopes: cfg.scopes, account: account }).catch(function () {
+              return pca.acquireTokenRedirect({ scopes: cfg.scopes, account: account });
+            });
+          if (tok && tok.accessToken) send({ token: tok.accessToken, exp: tok.expiresOn ? new Date(tok.expiresOn).getTime() : Date.now() + 3000000 });
+        } catch (e) {
+          document.getElementById("msg").textContent = "Sign-in failed: " + e.message;
+          send({ error: e.message });
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

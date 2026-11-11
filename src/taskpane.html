@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Follow-up</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="lib/msal-browser.min.js"></script>
+  <script src="config.js"></script>
+  <script src="core.js"></script>
+  <script src="auth.js"></script>
+  <script src="sync.js"></script>
+  <link rel="stylesheet" href="taskpane.css" />
+</head>
+<body>
+  <header>
+    <h1>Follow-up</h1>
+    <button id="syncBtn" class="ghost" title="Check for replies now">Sync</button>
+  </header>
+
+  <div id="signin" class="banner hidden">
+    <p>Sign in once so the add-in can check your conversations for replies.</p>
+    <button id="signinBtn" class="primary">Sign in</button>
+  </div>
+
+  <section id="current" class="card hidden">
+    <div class="label">This email</div>
+    <div id="currentSubject" class="subject"></div>
+    <div id="currentStatus" class="status"></div>
+    <button id="trackBtn" class="primary">Track for follow-up</button>
+  </section>
+
+  <section id="compose" class="card hidden">
+    <label class="toggle">
+      <input type="checkbox" id="composeToggle" />
+      <span>Track this email for follow-up after sending</span>
+    </label>
+    <p class="hint">Adds the “Follow-up” category. After you send, the add-in flags it and sets a reminder.</p>
+  </section>
+
+  <section>
+    <h2>Waiting for a reply <span id="waitingCount" class="count"></span></h2>
+    <ul id="waitingList" class="list"></ul>
+    <h2>Answered <span id="answeredCount" class="count"></span></h2>
+    <ul id="answeredList" class="list"></ul>
+  </section>
+
+  <details id="settings">
+    <summary>Settings</summary>
+    <label>Remind me after <input id="days" type="number" min="1" max="90" /> days</label>
+    <label>Reminder time <input id="reminderTime" type="time" /></label>
+    <button id="saveSettings" class="ghost">Save</button>
+  </details>
+
+  <footer id="footer"></footer>
+  <script src="taskpane.js"></script>
+</body>
+</html>
