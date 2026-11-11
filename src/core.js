@@ -94,5 +94,18 @@
     return actions;
   }
 
-  return { isAutoReply: isAutoReply, computeState: computeState, planActions: planActions, addDays: addDays, reminderMoment: reminderMoment };
+  /**
+   * Manual "done" tick. entry.m = ISO time you ticked it.
+   * Still counts as answered until you send a newer email in the thread.
+   */
+  function applyManual(entry, result) {
+    if (!entry.m) return result;
+    if (result.state === "waiting" && new Date(result.anchor.sentDateTime) <= new Date(entry.m)) {
+      return { state: "answered", anchor: result.anchor, lastReply: { sentDateTime: entry.m }, manual: true };
+    }
+    delete entry.m; // a real reply arrived, or you sent a newer email: normal rules again
+    return result;
+  }
+
+  return { applyManual: applyManual, isAutoReply: isAutoReply, computeState: computeState, planActions: planActions, addDays: addDays, reminderMoment: reminderMoment };
 });

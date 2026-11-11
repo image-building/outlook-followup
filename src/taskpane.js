@@ -125,6 +125,7 @@
       var overdue = e.d && new Date(e.d) <= new Date();
       return overdue ? "No reply — reminder was due " + fmtDate(e.d) : "Waiting for reply · reminder " + (e.d ? fmtDate(e.d) : "pending");
     }
+    if (e.st === "answered" && e.m) return "Marked done " + fmtDate(e.m);
     if (e.st === "answered") return "Answered " + (e.t ? fmtDate(e.t) : "");
     return "Tracked — checking…";
   }
@@ -152,11 +153,21 @@
       var li = document.createElement("li");
       var overdue = e.st === "waiting" && e.d && new Date(e.d) <= new Date();
       li.className = (e.st === "answered" ? "answered" : "") + (overdue ? " overdue" : "");
-      li.innerHTML = '<span class="box">' + (e.st === "answered" ? "✓" : "") + '</span><span class="t"></span><button class="x" title="Stop tracking">✕</button>';
+      var done = e.st === "answered";
+      li.innerHTML = '<button class="box" role="checkbox" aria-checked="' + done + '" title="' + (done ? "Mark as waiting again" : "Mark as done") + '">' + (done ? "✓" : "") + '</button><span class="t"></span><button class="x" title="Stop tracking">✕</button>';
       var t = li.querySelector(".t");
       t.textContent = e.s || "(no subject)";
       var meta = document.createElement("span"); meta.className = "meta"; meta.textContent = describe(e); t.appendChild(meta);
-      li.onclick = function () { openEntry(e); };
+      t.onclick = function () { openEntry(e); };
+      li.querySelector(".box").onclick = async function (ev) {
+        ev.stopPropagation();
+        var box = ev.currentTarget;
+        box.disabled = true;
+        box.textContent = done ? "" : "✓"; // instant feedback
+        status(done ? "Moving back to waiting…" : "Marking as done…");
+        try { await FUSync.setDone(e.c, !done, true); status(""); } catch (err) { status(err.message, true); }
+        render(); refreshCurrent();
+      };
       li.querySelector(".x").onclick = async function (ev) {
         ev.stopPropagation();
         status("Removing…");
@@ -173,6 +184,7 @@
   }
 
   function openEntry(e) {
+    if (isMobile()) { copySubject(e.s || ""); return; } // Outlook for iOS/Android can't open another email from an add-in
     try {
       if (!isMobile() && e.fm && Office.context.mailbox.convertToEwsId) {
         var ews = Office.context.mailbox.convertToEwsId(e.fm, Office.MailboxEnums.RestVersion.v2_0);
@@ -181,6 +193,21 @@
       }
     } catch (err) { console.warn(err); }
     if (e.w) Office.context.ui.openBrowserWindow ? Office.context.ui.openBrowserWindow(e.w) : window.open(e.w, "_blank");
+  }
+
+  function copySubject(text) {
+    var done = function () { status("Subject copied — paste it in Outlook's search to find the email."); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else fallback();
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
+      var ok = false; try { ok = document.execCommand("copy"); } catch (x) {}
+      document.body.removeChild(ta);
+      ok ? done() : status("Search Outlook for: " + text);
+    }
   }
 
   function status(text, isError) {

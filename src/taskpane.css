@@ -23,9 +23,11 @@ button:disabled { opacity: .5; cursor: default; }
 .toggle { display: flex; gap: 8px; align-items: flex-start; font-weight: 600; cursor: pointer; }
 .hint { color: var(--muted); margin: 6px 0 0; }
 .list { list-style: none; margin: 0; padding: 0; }
-.list li { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.list li { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.list .t { cursor: pointer; }
 .list li:hover .t { text-decoration: underline; }
-.list .box { flex: 0 0 16px; height: 16px; border: 1.5px solid var(--muted); border-radius: 3px; margin-top: 1px; display: grid; place-items: center; font-size: 11px; }
+.list .box { flex: 0 0 18px; width: 18px; height: 18px; padding: 0; border: 1.5px solid var(--muted); border-radius: 4px; margin-top: 1px; display: grid; place-items: center; font-size: 12px; line-height: 1; color: #fff; cursor: pointer; }
+.list .box:hover { border-color: var(--ok); }
 .list li.answered .box { background: var(--ok); border-color: var(--ok); color: #fff; }
 .list .t { flex: 1; min-width: 0; word-break: break-word; }
 .list .meta { display: block; color: var(--muted); font-size: 12px; }
@@ -42,4 +44,5 @@ footer .err { color: var(--warn); }
   button { padding: 9px 14px; }
   .list li { padding: 11px 0; }
   .list .x { padding: 4px 10px; font-size: 16px; }
+  .list .box { flex-basis: 24px; width: 24px; height: 24px; font-size: 15px; }
 }

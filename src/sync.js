@@ -149,7 +149,7 @@ window.FUSync = (function () {
 
   async function syncEntry(entry, data, ctx, interactive) {
     var msgs = await conversationMessages(entry.c, ctx, interactive);
-    var result = FUCore.computeState(msgs);
+    var result = FUCore.applyManual(entry, FUCore.computeState(msgs));
     if (result.state === "empty") return;
     var opts = { days: Number(data.settings.days) || 14, reminderTime: data.settings.reminderTime };
     if (result.anchor) entry.w = result.anchor.webLink;
@@ -236,6 +236,17 @@ window.FUSync = (function () {
     await save(data);
   }
 
+  /** done=true: you tick it off yourself. done=false: back to waiting. */
+  async function setDone(conversationId, done, interactive) {
+    var data = load();
+    var entry = data.items.find(function (e) { return e.c === conversationId; });
+    if (!entry) return;
+    if (done) entry.m = new Date().toISOString(); else delete entry.m;
+    var ctx = await context(interactive);
+    await syncEntry(entry, data, ctx, interactive);
+    await save(data);
+  }
+
   async function saveSettings(settings) {
     var data = load();
     data.settings = Object.assign(data.settings, settings);
@@ -245,5 +256,5 @@ window.FUSync = (function () {
 
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
-  return { load: load, syncAll: syncAll, track: track, untrack: untrack, saveSettings: saveSettings, ensureCategory: ensureCategory, graph: graph };
+  return { load: load, setDone: setDone, syncAll: syncAll, track: track, untrack: untrack, saveSettings: saveSettings, ensureCategory: ensureCategory, graph: graph };
 })();
