@@ -10,9 +10,9 @@
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Follow-up Tracker"/>
   <Description DefaultValue="Tag emails for follow-up. Replies tick them off automatically; unanswered emails get a reminder after two weeks."/>
-  <IconUrl DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-64.png"/>
-  <HighResolutionIconUrl DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-128.png"/>
-  <SupportUrl DefaultValue="https://YOUR-HOST/outlook-followup/"/>
+  <IconUrl DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-128.png"/>
+  <SupportUrl DefaultValue="https://image-building.github.io/outlook-followup/"/>
   <AppDomains>
     <AppDomain>https://login.microsoftonline.com</AppDomain>
   </AppDomains>
@@ -27,7 +27,7 @@
   <FormSettings>
     <Form xsi:type="ItemRead">
       <DesktopSettings>
-        <SourceLocation DefaultValue="https://YOUR-HOST/outlook-followup/src/taskpane.html"/>
+        <SourceLocation DefaultValue="https://image-building.github.io/outlook-followup/src/taskpane.html"/>
         <RequestedHeight>250</RequestedHeight>
       </DesktopSettings>
     </Form>
@@ -97,12 +97,12 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon16" DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-16.png"/>
-        <bt:Image id="Icon32" DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-32.png"/>
-        <bt:Image id="Icon80" DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-80.png"/>
+        <bt:Image id="Icon16" DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-16.png"/>
+        <bt:Image id="Icon32" DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-32.png"/>
+        <bt:Image id="Icon80" DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="TaskpaneUrl" DefaultValue="https://YOUR-HOST/outlook-followup/src/taskpane.html"/>
+        <bt:Url id="TaskpaneUrl" DefaultValue="https://image-building.github.io/outlook-followup/src/taskpane.html"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabel" DefaultValue="Follow-up"/>
@@ -173,12 +173,12 @@
       </Hosts>
       <Resources>
         <bt:Images>
-          <bt:Image id="Icon16" DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-16.png"/>
-          <bt:Image id="Icon32" DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-32.png"/>
-          <bt:Image id="Icon80" DefaultValue="https://YOUR-HOST/outlook-followup/assets/icon-80.png"/>
+          <bt:Image id="Icon16" DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-16.png"/>
+          <bt:Image id="Icon32" DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-32.png"/>
+          <bt:Image id="Icon80" DefaultValue="https://image-building.github.io/outlook-followup/assets/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="TaskpaneUrl" DefaultValue="https://YOUR-HOST/outlook-followup/src/taskpane.html"/>
+          <bt:Url id="TaskpaneUrl" DefaultValue="https://image-building.github.io/outlook-followup/src/taskpane.html"/>
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="GroupLabel" DefaultValue="Follow-up"/>
