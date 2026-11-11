@@ -1,5 +1,11 @@
-/* Tracking store (Outlook roaming settings, synced across your devices) + Microsoft Graph sync. */
-window.FUSync = (function () {
+/* Follow-up engine for one mailbox: Microsoft Graph sync + a small local cache.
+ * The mailbox is the source of truth (Follow-up category, flags, reminder events);
+ * the cache only remembers ids so fewer calls are needed.
+ *
+ * opts: { getToken(interactive) -> Promise<string>,
+ *         store: { get() -> string|null, set(string) -> Promise },
+ *         myAddress: optional extra address that counts as "me" } */
+window.FUEngine = function (opts) {
   "use strict";
   var cfg = window.FU_CONFIG;
   var GRAPH = "https://graph.microsoft.com/v1.0";
@@ -8,13 +14,17 @@ window.FUSync = (function () {
   var STORE_VERSION = 3;
   // Hidden property on each reminder event that links it to its conversation.
   var CONV_PROP = "String {00020329-0000-0000-C000-000000000046} Name FollowUpConversationId";
+  // Hidden property on the mailbox's root folder holding your settings, so every device and the web page agree.
+  var SETTINGS_PROP = "String {00020329-0000-0000-C000-000000000046} Name FollowUpSettings";
 
   /* ---------- store ---------- */
   // Entry: { c: conversationId, s: subject, st: 'waiting'|'answered'|'new', fm: flagged message id,
   //          e: reminder event id, d: reminder ISO, t: last activity ISO, w: weblink of anchor }
   function load() {
-    var raw = Office.context.roamingSettings.get(KEY);
-    var data = raw ? JSON.parse(raw) : {};
+    var raw = null;
+    try { raw = opts.store.get(KEY); } catch (e) { raw = null; }
+    var data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (e) { data = {}; }
     data.items = data.items || [];
     data.ignored = data.ignored || [];
     data.settings = Object.assign({}, cfg.defaults, data.settings || {});
@@ -23,17 +33,12 @@ window.FUSync = (function () {
   function save(data) {
     var json = JSON.stringify(data);
     if (json.length > 30000) throw new Error("Tracking list is full — stop tracking some old answered emails.");
-    Office.context.roamingSettings.set(KEY, json);
-    return new Promise(function (resolve, reject) {
-      Office.context.roamingSettings.saveAsync(function (r) {
-        r.status === Office.AsyncResultStatus.Succeeded ? resolve() : reject(new Error(r.error.message));
-      });
-    });
+    return Promise.resolve(opts.store.set(KEY, json));
   }
 
   /* ---------- graph ---------- */
   async function graph(method, path, body, interactive) {
-    var token = await FUAuth.getToken(interactive);
+    var token = await opts.getToken(interactive);
     for (var attempt = 0; attempt < 3; attempt++) {
       var res = await fetch(path.indexOf("http") === 0 ? path : GRAPH + path, {
         method: method,
@@ -63,10 +68,22 @@ window.FUSync = (function () {
     if (ctxCache) return ctxCache;
     var me = await graph("GET", "/me?$select=mail,userPrincipalName", null, interactive);
     var sent = await graph("GET", "/me/mailFolders/sentitems?$select=id", null, interactive);
-    var addrs = [me.mail, me.userPrincipalName, Office.context.mailbox.userProfile.emailAddress]
+    var addrs = [me.mail, me.userPrincipalName, opts.myAddress]
       .filter(Boolean).map(function (a) { return a.toLowerCase(); });
-    ctxCache = { addresses: addrs, sentFolderId: sent.id };
+    ctxCache = { addresses: addrs, sentFolderId: sent.id, email: (me.mail || me.userPrincipalName || "").toLowerCase() };
     return ctxCache;
+  }
+
+  async function readMailboxSettings(interactive) {
+    var f = await graph("GET", "/me/mailFolders/msgfolderroot?$select=id&$expand=singleValueExtendedProperties($filter=" +
+      encodeURIComponent("id eq '" + SETTINGS_PROP + "'") + ")", null, interactive);
+    var p = f && (f.singleValueExtendedProperties || [])[0];
+    try { return p ? JSON.parse(p.value) : null; } catch (e) { return null; }
+  }
+  async function writeMailboxSettings(settings, interactive) {
+    await graph("PATCH", "/me/mailFolders/msgfolderroot", {
+      singleValueExtendedProperties: [{ id: SETTINGS_PROP, value: JSON.stringify({ days: settings.days, reminderTime: settings.reminderTime }) }]
+    }, interactive);
   }
 
   async function ensureCategory(interactive) {
@@ -274,6 +291,10 @@ window.FUSync = (function () {
       var errors = [];
       try {
         var ctx = await context(interactive);
+        try {
+          var ms = await readMailboxSettings(interactive);
+          if (ms) data.settings = Object.assign(data.settings, ms);
+        } catch (e) { console.warn("settings", e); }
         await adoptTagged(data, interactive);
         var events = await reminderEvents(data, interactive);
         var keep = [];
@@ -322,6 +343,7 @@ window.FUSync = (function () {
     var entry = addEntry(data, conversationId, subject, null);
     var ctx = await context(interactive);
     var msgs = await conversationMessages(conversationId, ctx, interactive);
+    try { await ensureCategory(interactive); } catch (e) { console.warn(e); }
     await markConversation(msgs, interactive);
     await syncEntry(entry, data, ctx, interactive, msgs);
     await save(data);
@@ -373,11 +395,21 @@ window.FUSync = (function () {
   async function saveSettings(settings) {
     var data = load();
     data.settings = Object.assign(data.settings, settings);
+    await writeMailboxSettings(data.settings, true);
     data.items.forEach(function (e) { if (e.st === "waiting") e.d = null; }); // forces reminders to be re-timed on next sync
     await save(data);
   }
 
+  async function settings(interactive) {
+    var data = load();
+    try { var ms = await readMailboxSettings(interactive); if (ms) data.settings = Object.assign(data.settings, ms); } catch (e) { /* keep cached */ }
+    return data.settings;
+  }
+
+  async function whoAmI(interactive) { return (await context(interactive)).email; }
+
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
 
-  return { load: load, setDone: setDone, syncAll: syncAll, track: track, untrack: untrack, saveSettings: saveSettings, ensureCategory: ensureCategory, graph: graph };
-})();
+  return { load: load, setDone: setDone, syncAll: syncAll, track: track, untrack: untrack, saveSettings: saveSettings,
+    settings: settings, whoAmI: whoAmI, ensureCategory: ensureCategory, graph: graph };
+};

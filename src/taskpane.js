@@ -7,6 +7,20 @@
   var lastAuto = 0;
 
   Office.onReady(async function () {
+    var rs = Office.context.roamingSettings;
+    window.FUSync = FUEngine({
+      getToken: FUAuth.getToken,
+      myAddress: Office.context.mailbox.userProfile.emailAddress,
+      store: {
+        get: function (k) { return rs.get(k); },
+        set: function (k, v) {
+          rs.set(k, v);
+          return new Promise(function (resolve, reject) {
+            rs.saveAsync(function (r) { r.status === Office.AsyncResultStatus.Succeeded ? resolve() : reject(new Error(r.error.message)); });
+          });
+        }
+      }
+    });
     wireUi();
     render();
     await refreshCurrent();
@@ -50,6 +64,9 @@
     else status("");
     render();
     refreshCurrent();
+    var st = FUSync.load().settings;
+    if (document.activeElement !== $("days")) $("days").value = st.days;
+    if (document.activeElement !== $("reminderTime")) $("reminderTime").value = st.reminderTime;
   }
 
   /* ---------- current email ---------- */
