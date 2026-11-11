@@ -37,3 +37,9 @@ details label { display: block; margin: 8px 0; }
 details input { font: inherit; padding: 3px 5px; width: 6em; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; }
 footer { margin-top: 14px; color: var(--muted); font-size: 11px; }
 footer .err { color: var(--warn); }
+@media (pointer: coarse) {
+  body { font-size: 15px; }
+  button { padding: 9px 14px; }
+  .list li { padding: 11px 0; }
+  .list .x { padding: 4px 10px; font-size: 16px; }
+}

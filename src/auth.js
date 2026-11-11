@@ -52,6 +52,9 @@ window.FUAuth = (function () {
 
   function signInWithDialog() {
     return new Promise(function (resolve, reject) {
+      if (!Office.context.ui || !Office.context.ui.displayDialogAsync) {
+        return reject(new Error("This Outlook app can't sign in to the add-in yet. Update Outlook, or use the add-in on your Mac/PC — tracking syncs across devices."));
+      }
       var url = cfg.baseUrl + "/src/auth-dialog.html";
       Office.context.ui.displayDialogAsync(url, { height: 60, width: 30, promptBeforeOpen: false }, function (res) {
         if (res.status !== Office.AsyncResultStatus.Succeeded) return reject(new Error(res.error.message));

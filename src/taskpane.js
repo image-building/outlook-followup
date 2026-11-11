@@ -62,6 +62,7 @@
     $("compose").classList.add("hidden");
     if (!it) return;
     if (isCompose()) {
+      if (!it.categories || !Office.context.requirements.isSetSupported("Mailbox", "1.8")) return; // e.g. older builds
       $("compose").classList.remove("hidden");
       if (it.categories) {
         it.categories.getAsync(function (r) {
@@ -166,9 +167,14 @@
     });
   }
 
+  function isMobile() {
+    var host = Office.context.mailbox.diagnostics && Office.context.mailbox.diagnostics.hostName;
+    return host === "OutlookIOS" || host === "OutlookAndroid";
+  }
+
   function openEntry(e) {
     try {
-      if (e.fm && Office.context.mailbox.convertToEwsId) {
+      if (!isMobile() && e.fm && Office.context.mailbox.convertToEwsId) {
         var ews = Office.context.mailbox.convertToEwsId(e.fm, Office.MailboxEnums.RestVersion.v2_0);
         Office.context.mailbox.displayMessageForm(ews);
         return;

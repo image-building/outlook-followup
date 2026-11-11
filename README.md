@@ -1,6 +1,6 @@
 # Follow-up Tracker — Outlook add-in
 
-Works in **classic Outlook for Windows** and **new Outlook for Mac** (and Outlook on the web), on a Microsoft 365 mailbox.
+Works in **classic Outlook for Windows**, **new Outlook for Mac**, **Outlook for iOS/Android** and Outlook on the web, on a Microsoft 365 mailbox.
 
 ## What it does
 
@@ -54,6 +54,7 @@ The first time you open the add-in it asks you to sign in once.
 - **New email:** in the compose window click **Follow-up** (in classic Windows: the ribbon; on Mac: the *Apps* / `…` menu) and tick *Track this email for follow-up after sending*.
 - **Already sent:** open it in Sent Items → **Follow-up** → *Track for follow-up*.
 - **See everything:** open the Follow-up pane on any email. Click the **pin** icon to keep it open — it then checks for replies automatically while you read mail.
+- **iPhone:** open an email (e.g. in Sent Items) → tap the **Apps** icon (or `…`) → **Follow-up**. You can track/untrack and see the list; tagging while composing is desktop-only.
 - **Settings** in the pane let you change 14 days and the 09:00 reminder time.
 
 ## Good to know
