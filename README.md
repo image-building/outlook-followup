@@ -60,6 +60,19 @@ The first time you open the add-in it asks you to sign in once.
 ## Online overview (all mailboxes)
 Open **https://image-building.github.io/outlook-followup/** in any browser (also Safari on iPhone — use *Share → Add to Home Screen* for an app icon). Sign in with each Microsoft 365 account (**+ Add account**). You get one combined list with a filter per mailbox; it checks for replies when opened and every 5 minutes while open. Tick boxes and ✕ work the same as in Outlook.
 
+## Gmail
+Tag a Gmail email with the label **Follow-up** (web or Gmail app). A small Google Apps Script in your Gmail account checks those threads every 15 minutes; answered threads get the label **Follow-up/Answered**. The Gmail follow-ups appear on the overview page, and their reminders go into your Imagebuilding Outlook calendar.
+
+Setup (once, ~10 minutes, signed in to Google as your Gmail account):
+1. Go to **script.google.com → New project**. Name it `Follow-up Tracker`.
+2. Delete the sample code and paste the whole of `gmail/FollowUp.gs`. Save (💾).
+3. **Deploy → New deployment** → ⚙️ type **Web app** → *Execute as*: **Me**, *Who has access*: **Anyone** → **Deploy** → **Authorize access** → choose your account → if you see "Google hasn't verified this app": **Advanced → Go to Follow-up Tracker (unsafe)** → **Allow**. (It's your own script; "unsafe" only means Google hasn't reviewed it.)
+4. In the editor, pick **setup** in the function dropdown at the top and click **Run**. Then open **Execution log**: it shows your **connection link**.
+5. On the overview page click **+ Connect Gmail** and paste the link.
+
+Keep the link private (it gives read access to the follow-up list). To make a new one, run **resetKey**.
+If you change the script later: **Deploy → Manage deployments → ✏️ → Version: New version → Deploy** (the link stays the same).
+
 ## Adding another Microsoft 365 organisation
 1. Entra app → **Authentication → Supported accounts** → *Accounts in any organizational directory (multitenant)*.
 2. As admin of the other organisation, open the admin-consent link (see below) in a private window and approve.
