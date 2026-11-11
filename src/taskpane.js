@@ -140,6 +140,7 @@
   function describe(e) {
     if (e.st === "waiting") {
       var overdue = e.d && new Date(e.d) <= new Date();
+      if (e.ro) return (overdue ? "Reopened — reminder was due " : "Waiting (reopened) · reminder ") + (e.d ? fmtDate(e.d) : "pending");
       return overdue ? "No reply — reminder was due " + fmtDate(e.d) : "Waiting for reply · reminder " + (e.d ? fmtDate(e.d) : "pending");
     }
     if (e.st === "nomine") return "No email from you found in this thread" + (e.x && e.x.length ? " (from: " + e.x.join(", ") + ")" : "");
@@ -176,6 +177,7 @@
       var t = li.querySelector(".t");
       t.textContent = e.s || "(no subject)";
       var meta = document.createElement("span"); meta.className = "meta"; meta.textContent = describe(e); t.appendChild(meta);
+      addLatest(t, e);
       t.onclick = function () { openEntry(e); };
       li.querySelector(".box").onclick = async function (ev) {
         ev.stopPropagation();
@@ -185,8 +187,7 @@
         status(done ? "Moving back to waiting…" : "Marking as done…");
         try {
           await FUSync.setDone(e.c, !done, true);
-          var now = FUSync.load().items.find(function (i) { return i.c === e.c; });
-          status(done && now && now.st === "answered" && !now.m ? "This one has a real reply, so it stays answered. It goes back to waiting when you send another email." : "");
+          status("");
         } catch (err) { status(err.message, true); }
         render(); refreshCurrent();
       };
@@ -203,6 +204,14 @@
   function isMobile() {
     var host = Office.context.mailbox.diagnostics && Office.context.mailbox.diagnostics.hostName;
     return host === "OutlookIOS" || host === "OutlookAndroid";
+  }
+
+  function addLatest(container, e) {
+    if (!e.lp) return;
+    var el = document.createElement("span");
+    el.className = "latest";
+    el.textContent = "↳ " + e.lp.f + " · " + fmtDate(e.lp.d) + (e.lp.p ? " — “" + e.lp.p + "”" : "");
+    container.appendChild(el);
   }
 
   function openEntry(e) {

@@ -105,7 +105,7 @@ window.FUEngine = function (opts) {
 
   async function conversationMessages(conversationId, ctx, interactive) {
     var filter = encodeURIComponent("conversationId eq '" + conversationId.replace(/'/g, "''") + "'");
-    var url = "/me/messages?$filter=" + filter + "&$select=id,subject,from,sentDateTime,isDraft,parentFolderId,webLink,categories,flag&$top=100";
+    var url = "/me/messages?$filter=" + filter + "&$select=id,subject,from,sentDateTime,isDraft,parentFolderId,webLink,categories,flag,bodyPreview&$top=100";
     var out = [];
     while (url) {
       var page = await graph("GET", url, null, interactive);
@@ -179,6 +179,18 @@ window.FUEngine = function (opts) {
     }
   }
 
+  /** Who sent the most recent email in the thread, when, and its first line. */
+  function latestPreview(msgs) {
+    var real = msgs.filter(function (m) { return !m.isDraft && m.sentDateTime; })
+      .sort(function (a, b) { return new Date(b.sentDateTime) - new Date(a.sentDateTime); });
+    var m = real.find(function (x) { return !x.isAuto; }) || real[0];
+    if (!m) return null;
+    var name = m.isMine ? "You" : ((m.from && m.from.emailAddress && (m.from.emailAddress.name || m.from.emailAddress.address)) || "");
+    var text = (m.bodyPreview || "").replace(/\s+/g, " ").trim();
+    if (text.length > 110) text = text.slice(0, 107).replace(/\s+\S*$/, "") + "…";
+    return { f: name.slice(0, 40), d: m.sentDateTime, p: text };
+  }
+
   function hasCategory(msgs) {
     return msgs.some(function (m) { return (m.categories || []).indexOf(cfg.category) >= 0; });
   }
@@ -199,6 +211,7 @@ window.FUEngine = function (opts) {
     msgs = msgs || await conversationMessages(entry.c, ctx, interactive);
     var result = FUCore.computeState(msgs);
     if (result.state === "empty") return;
+    entry.lp = latestPreview(msgs);
     if (result.state === "nomine") {
       // Nothing from you in this thread: show it, but don't pretend it's answered. A ✓ on the latest email = done by hand.
       var fl = result.anchor.flag;
@@ -228,6 +241,15 @@ window.FUEngine = function (opts) {
       delete entry.m;
     }
     result = FUCore.applyManual(entry, result);
+    // Reopened: a reply came in, but you put a flag on it (unticked it, or flagged it in Outlook) -> keep following up.
+    delete entry.ro;
+    if (result.state === "answered" && !result.manual && result.lastReply && result.lastReply.flag && result.lastReply.flag.flagStatus === "flagged") {
+      var rf = result.lastReply.flag;
+      var since = (rf.startDateTime && rf.startDateTime.dateTime) ? rf.startDateTime.dateTime.replace(/(\.\d{3})\d*/, "$1").replace(/Z?$/, "Z") : result.lastReply.sentDateTime;
+      if (new Date(since) < new Date(result.lastReply.sentDateTime)) since = result.lastReply.sentDateTime;
+      result = { state: "waiting", anchor: { id: result.lastReply.id, sentDateTime: since, webLink: result.lastReply.webLink }, lastReply: null };
+      entry.ro = true;
+    }
     var opts = { days: Number(data.settings.days) || 14, reminderTime: data.settings.reminderTime };
     if (result.anchor) entry.w = result.anchor.webLink;
     var newest = msgs.filter(function (m) { return !m.isDraft; }).map(function (m) { return m.sentDateTime; }).sort().pop();
@@ -411,15 +433,26 @@ window.FUEngine = function (opts) {
     if (!entry) return;
     var ctx = await context(interactive);
     var msgs = await conversationMessages(conversationId, ctx, interactive);
-    var anchor = FUCore.computeState(msgs).anchor;
-    if (!anchor) throw new Error("Couldn't find the emails of this conversation in your mailbox.");
-    if (anchor) {
-      var now = new Date().toISOString();
-      var flag = done ? { flagStatus: "complete", completedDateTime: { dateTime: now.replace(/Z$/, ""), timeZone: "UTC" } } : { flagStatus: "notFlagged" };
-      await graph("PATCH", "/me/messages/" + anchor.id, { flag: flag }, interactive);
-      anchor.flag = done ? { flagStatus: "complete", completedDateTime: { dateTime: now } } : flag;
+    var state = FUCore.computeState(msgs);
+    if (!state.anchor) throw new Error("Couldn't find the emails of this conversation in your mailbox.");
+    var now = new Date().toISOString();
+    var nowUtc = { dateTime: now.replace(/Z$/, ""), timeZone: "UTC" };
+    var complete = { flagStatus: "complete", completedDateTime: nowUtc };
+    async function setFlag(msg, flag) {
+      await graph("PATCH", "/me/messages/" + msg.id, { flag: flag }, interactive);
+      msg.flag = JSON.parse(JSON.stringify(flag));
+      if (msg.flag.completedDateTime) msg.flag.completedDateTime.dateTime = now;
+      if (msg.flag.startDateTime) msg.flag.startDateTime.dateTime = now;
     }
-    if (!done) { entry.st = "new"; entry.fm = null; } // fresh flag + reminder
+    if (state.state === "answered") {
+      // A real reply exists. Unticking reopens it by flagging that reply; ticking closes a reopened one.
+      var days = Number(load().settings.days) || 14;
+      if (done) await setFlag(state.lastReply, complete);
+      else await setFlag(state.lastReply, { flagStatus: "flagged", startDateTime: nowUtc, dueDateTime: { dateTime: FUCore.addDays(now, days).replace(/Z$/, ""), timeZone: "UTC" } });
+    } else {
+      await setFlag(state.anchor, done ? complete : { flagStatus: "notFlagged" });
+      if (!done) { entry.st = "new"; entry.fm = null; } // fresh flag + reminder
+    }
     await syncEntry(entry, data, ctx, interactive, msgs);
     await save(data);
   }

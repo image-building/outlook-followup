@@ -139,6 +139,7 @@
   function describe(e) {
     if (e.st === "waiting") {
       var overdue = e.d && new Date(e.d) <= new Date();
+      if (e.ro) return (overdue ? "Reopened — reminder was due " : "Waiting (reopened) · reminder ") + (e.d ? fmtDate(e.d) : "pending");
       return overdue ? "No reply — reminder was due " + fmtDate(e.d) : "Waiting · reminder " + (e.d ? fmtDate(e.d) : "pending");
     }
     if (e.st === "nomine") return "No email from you found in this thread" + (e.x && e.x.length ? " (from: " + e.x.join(", ") + ")" : "");
@@ -185,13 +186,18 @@
         meta.appendChild(tag);
       }
       meta.appendChild(document.createTextNode(describe(e)));
+      if (e.lp) {
+        var lp = document.createElement("span");
+        lp.className = "latest";
+        lp.textContent = "↳ " + e.lp.f + " · " + fmtDate(e.lp.d) + (e.lp.p ? " — “" + e.lp.p + "”" : "");
+        li.querySelector(".t").appendChild(lp);
+      }
       li.querySelector(".box").onclick = async function (ev) {
         var btn = ev.currentTarget; btn.disabled = true; btn.textContent = done ? "" : "✓";
         status(done ? "Moving back to waiting…" : "Marking as done…");
         try {
           await x.engine.setDone(e.c, !done, true);
-          var now = x.engine.load().items.find(function (i) { return i.c === e.c; });
-          status(done && now && now.st === "answered" && !now.m ? "This one has a real reply, so it stays answered. It goes back to waiting when you send another email." : "");
+          status("");
         } catch (err) { status(err.message, true); }
         render();
       };

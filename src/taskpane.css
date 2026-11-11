@@ -31,6 +31,7 @@ button:disabled { opacity: .5; cursor: default; }
 .list li.answered .box { background: var(--ok); border-color: var(--ok); color: #fff; }
 .list .t { flex: 1; min-width: 0; word-break: break-word; }
 .list .meta { display: block; color: var(--muted); font-size: 12px; }
+.list .latest { display: block; margin: 3px 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .list li.overdue .meta { color: var(--warn); font-weight: 600; }
 .list .x { border: 0; padding: 0 4px; color: var(--muted); }
 .empty { color: var(--muted); padding: 6px 0; }
