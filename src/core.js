@@ -40,7 +40,7 @@
   /**
    * Decide the state of one conversation.
    * messages: [{ id, sentDateTime, isMine, isAuto, isDraft }]
-   * Returns { state: 'waiting' | 'answered' | 'empty', anchor, lastReply }
+   * Returns { state: 'waiting' | 'answered' | 'nomine' | 'empty', anchor, lastReply }
    *   waiting  -> my message is the latest real one; anchor = that message
    *   answered -> someone else replied after my latest message; anchor = my latest message (may be null)
    */
@@ -53,6 +53,7 @@
     var mine = real.filter(function (m) { return m.isMine; });
     var lastMine = mine.length ? mine[mine.length - 1] : null;
     if (latest.isMine) return { state: "waiting", anchor: latest, lastReply: null };
+    if (!lastMine) return { state: "nomine", anchor: latest, lastReply: null }; // no email from you in this thread
     return { state: "answered", anchor: lastMine, lastReply: latest };
   }
 

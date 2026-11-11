@@ -142,6 +142,7 @@
       var overdue = e.d && new Date(e.d) <= new Date();
       return overdue ? "No reply — reminder was due " + fmtDate(e.d) : "Waiting for reply · reminder " + (e.d ? fmtDate(e.d) : "pending");
     }
+    if (e.st === "nomine") return "No email from you found in this thread" + (e.x && e.x.length ? " (from: " + e.x.join(", ") + ")" : "");
     if (e.st === "answered" && e.m) return "Marked done " + fmtDate(e.m);
     if (e.st === "answered") return "Answered " + (e.t ? fmtDate(e.t) : "");
     return "Tracked — checking…";
@@ -182,7 +183,11 @@
         box.disabled = true;
         box.textContent = done ? "" : "✓"; // instant feedback
         status(done ? "Moving back to waiting…" : "Marking as done…");
-        try { await FUSync.setDone(e.c, !done, true); status(""); } catch (err) { status(err.message, true); }
+        try {
+          await FUSync.setDone(e.c, !done, true);
+          var now = FUSync.load().items.find(function (i) { return i.c === e.c; });
+          status(done && now && now.st === "answered" && !now.m ? "This one has a real reply, so it stays answered. It goes back to waiting when you send another email." : "");
+        } catch (err) { status(err.message, true); }
         render(); refreshCurrent();
       };
       li.querySelector(".x").onclick = async function (ev) {

@@ -64,13 +64,24 @@ window.FUEngine = function (opts) {
   }
 
   var ctxCache = null;
+  var SENT_NAMES = /^(sent|sent items|sent messages|sent mail|verzonden|verzonden items|verzonden berichten|elementos enviados|enviados|correo enviado|gesendet|gesendete elemente|gesendete objekte|éléments envoyés|envoyés|posta inviata|elementi inviati)$/i;
+
   async function context(interactive) {
     if (ctxCache) return ctxCache;
-    var me = await graph("GET", "/me?$select=mail,userPrincipalName", null, interactive);
+    var me;
+    try { me = await graph("GET", "/me?$select=mail,userPrincipalName,proxyAddresses,otherMails", null, interactive); }
+    catch (e) { if (e.code === "SIGNIN_REQUIRED") throw e; me = await graph("GET", "/me?$select=mail,userPrincipalName", null, interactive); }
     var sent = await graph("GET", "/me/mailFolders/sentitems?$select=id", null, interactive);
+    var sentIds = [sent.id];
+    try { // other "sent" folders, e.g. created by a phone or IMAP app
+      var folders = await graph("GET", "/me/mailFolders?$select=id,displayName&$top=200", null, interactive);
+      (folders.value || []).forEach(function (f) { if (SENT_NAMES.test((f.displayName || "").trim()) && sentIds.indexOf(f.id) < 0) sentIds.push(f.id); });
+    } catch (e) { if (e.code === "SIGNIN_REQUIRED") throw e; }
     var addrs = [me.mail, me.userPrincipalName, opts.myAddress]
+      .concat((me.proxyAddresses || []).map(function (p) { return String(p).replace(/^smtp:/i, ""); }))
+      .concat(me.otherMails || [])
       .filter(Boolean).map(function (a) { return a.toLowerCase(); });
-    ctxCache = { addresses: addrs, sentFolderId: sent.id, email: (me.mail || me.userPrincipalName || "").toLowerCase() };
+    ctxCache = { addresses: addrs, sentFolderIds: sentIds, sentFolderId: sent.id, email: (me.mail || me.userPrincipalName || "").toLowerCase() };
     return ctxCache;
   }
 
@@ -103,7 +114,7 @@ window.FUEngine = function (opts) {
     }
     out.forEach(function (m) {
       var from = ((m.from && m.from.emailAddress && m.from.emailAddress.address) || "").toLowerCase();
-      m.isMine = m.parentFolderId === ctx.sentFolderId || ctx.addresses.indexOf(from) >= 0;
+      m.isMine = ctx.sentFolderIds.indexOf(m.parentFolderId) >= 0 || ctx.addresses.indexOf(from) >= 0;
       m.isAuto = !m.isMine && FUCore.isAutoReply(m);
     });
     // Incoming messages newer than my latest one: check their headers for auto-replies (out-of-office etc.)
@@ -188,6 +199,26 @@ window.FUEngine = function (opts) {
     msgs = msgs || await conversationMessages(entry.c, ctx, interactive);
     var result = FUCore.computeState(msgs);
     if (result.state === "empty") return;
+    if (result.state === "nomine") {
+      // Nothing from you in this thread: show it, but don't pretend it's answered. A ✓ on the latest email = done by hand.
+      var fl = result.anchor.flag;
+      entry.x = msgs.map(function (m) { return ((m.from && m.from.emailAddress && m.from.emailAddress.address) || "").toLowerCase(); })
+        .filter(function (a, i, arr) { return a && arr.indexOf(a) === i; }).slice(0, 3);
+      entry.w = result.anchor.webLink;
+      if (!entry.s) entry.s = (result.anchor.subject || "").slice(0, 80);
+      if (entry.e) { await run({ type: "deleteReminder", eventId: entry.e }, entry, interactive); }
+      if (fl && fl.flagStatus === "complete") {
+        entry.st = "answered";
+        entry.m = (fl.completedDateTime && fl.completedDateTime.dateTime ? fl.completedDateTime.dateTime.replace(/(\.\d{3})\d*/, "$1").replace(/Z?$/, "Z") : null) || entry.m || new Date().toISOString();
+      } else {
+        entry.st = "nomine";
+        delete entry.m;
+      }
+      entry.d = null;
+      entry.t = result.anchor.sentDateTime;
+      return;
+    }
+    delete entry.x;
     // Outlook's own flag is the truth for "done by hand": a ✓ on my latest email while no reply has come in.
     var f = result.state === "waiting" && result.anchor.flag;
     if (f && f.flagStatus === "complete") {
@@ -381,7 +412,8 @@ window.FUEngine = function (opts) {
     var ctx = await context(interactive);
     var msgs = await conversationMessages(conversationId, ctx, interactive);
     var anchor = FUCore.computeState(msgs).anchor;
-    if (anchor && anchor.isMine) {
+    if (!anchor) throw new Error("Couldn't find the emails of this conversation in your mailbox.");
+    if (anchor) {
       var now = new Date().toISOString();
       var flag = done ? { flagStatus: "complete", completedDateTime: { dateTime: now.replace(/Z$/, ""), timeZone: "UTC" } } : { flagStatus: "notFlagged" };
       await graph("PATCH", "/me/messages/" + anchor.id, { flag: flag }, interactive);
