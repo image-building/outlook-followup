@@ -16,6 +16,9 @@ window.FUEngine = function (opts) {
   var CONV_PROP = "String {00020329-0000-0000-C000-000000000046} Name FollowUpConversationId";
   // Hidden property on the mailbox's root folder holding your settings, so every device and the web page agree.
   var SETTINGS_PROP = "String {00020329-0000-0000-C000-000000000046} Name FollowUpSettings";
+  // Written by the IMAP helper on your Mac: the IMAP follow-up list, and the actions the web page asks it to do.
+  var IMAP_PROP = "String {00020329-0000-0000-C000-000000000046} Name FollowUpImap";
+  var QUEUE_PROP = "String {00020329-0000-0000-C000-000000000046} Name FollowUpImapActions";
 
   /* ---------- store ---------- */
   // Entry: { c: conversationId, s: subject, st: 'waiting'|'answered'|'new', fm: flagged message id,
@@ -85,11 +88,46 @@ window.FUEngine = function (opts) {
     return ctxCache;
   }
 
+  var lastImap = null; // { account, lastRun, items, error } from the IMAP helper
+  async function readRootProps(interactive) {
+    var flt = "id eq '" + SETTINGS_PROP + "' or id eq '" + IMAP_PROP + "' or id eq '" + QUEUE_PROP + "'";
+    var f = await graph("GET", "/me/mailFolders/msgfolderroot?$select=id&$expand=singleValueExtendedProperties($filter=" + encodeURIComponent(flt) + ")", null, interactive);
+    var out = {};
+    ((f && f.singleValueExtendedProperties) || []).forEach(function (p) {
+      var id = (p.id || "").toLowerCase(), v = null;
+      try { v = JSON.parse(p.value); } catch (e) { v = null; }
+      if (/name followupsettings$/.test(id)) out.settings = v;
+      else if (/name followupimap$/.test(id)) out.imap = v;
+      else if (/name followupimapactions$/.test(id)) out.queue = v;
+    });
+    return out;
+  }
   async function readMailboxSettings(interactive) {
-    var f = await graph("GET", "/me/mailFolders/msgfolderroot?$select=id&$expand=singleValueExtendedProperties($filter=" +
-      encodeURIComponent("id eq '" + SETTINGS_PROP + "'") + ")", null, interactive);
-    var p = f && (f.singleValueExtendedProperties || [])[0];
-    try { return p ? JSON.parse(p.value) : null; } catch (e) { return null; }
+    var r = await readRootProps(interactive);
+    lastImap = r.imap ? applyQueue(r.imap, r.queue || []) : null;
+    return r.settings || null;
+  }
+  /** Shows actions the helper hasn't done yet (it runs every 15 minutes) as already done. */
+  function applyQueue(imap, queue) {
+    var copy = JSON.parse(JSON.stringify(imap));
+    copy.items = (copy.items || []).filter(function (it) {
+      var acts = queue.filter(function (a) { return a.id === it.id; });
+      for (var i = 0; i < acts.length; i++) {
+        it.pending = true;
+        if (acts[i].action === "untrack") return false;
+        if (acts[i].action === "done") { it.st = "answered"; it.m = it.m || acts[i].at; it.ro = false; }
+        if (acts[i].action === "undone") { if (it.m) { it.m = null; it.st = it.a ? "waiting" : "nomine"; } else { it.st = "waiting"; it.ro = true; } }
+      }
+      return true;
+    });
+    copy.queued = queue.length;
+    return copy;
+  }
+  async function imapAction(id, action, interactive) {
+    var r = await readRootProps(interactive);
+    var queue = (r.queue || []).concat([{ id: id, action: action, at: new Date().toISOString() }]);
+    await graph("PATCH", "/me/mailFolders/msgfolderroot", { singleValueExtendedProperties: [{ id: QUEUE_PROP, value: JSON.stringify(queue) }] }, interactive);
+    lastImap = r.imap ? applyQueue(r.imap, queue) : null;
   }
   async function writeMailboxSettings(settings, interactive) {
     await graph("PATCH", "/me/mailFolders/msgfolderroot", {
@@ -299,6 +337,7 @@ window.FUEngine = function (opts) {
         if ((ev.categories || []).indexOf(cfg.category) < 0 || !/^Follow up: /.test(ev.subject || "")) continue;
         var prop = (ev.singleValueExtendedProperties || [])[0];
         var conv = prop && prop.value;
+        if (conv && conv.indexOf("imap:") === 0) continue; // managed by the IMAP helper on your Mac
         if (conv && conv.indexOf("gmail:") === 0) { // reminder for a Gmail follow-up
           (extEvents[conv] = extEvents[conv] || []).push({ id: ev.id, start: ev.start && ev.start.dateTime ? ev.start.dateTime.replace(/(\.\d{3})\d*/, "$1").replace(/Z?$/, "Z") : null });
           continue;
@@ -557,5 +596,6 @@ window.FUEngine = function (opts) {
 
   return { load: load, setDone: setDone, syncAll: syncAll, track: track, untrack: untrack, saveSettings: saveSettings,
     settings: settings, whoAmI: whoAmI, ensureCategory: ensureCategory, graph: graph,
-    gmail: function () { return lastGmail; }, gmailAction: gmailAction, setGmail: setGmail };
+    gmail: function () { return lastGmail; }, gmailAction: gmailAction, setGmail: setGmail,
+    imap: function () { return lastImap; }, imapAction: imapAction };
 };

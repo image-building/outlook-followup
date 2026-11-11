@@ -20,7 +20,6 @@
     await pca.handleRedirectPromise();
     $("signinBtn").onclick = addAccount;
     $("addAccountBtn").onclick = addAccount;
-    $("gmailBtn").onclick = connectGmail;
     $("syncBtn").onclick = function () { syncAll(); };
     setup();
     if (engines.length) syncAll();
@@ -152,7 +151,16 @@
       gc.querySelector(".rm").onclick = disconnectGmail;
       box.appendChild(gc);
     }
-    $("gmailBtn").classList.toggle("hidden", !!gmailHost() || !engines.length);
+    var im = imapSource();
+    if (im) {
+      var ic = document.createElement("span");
+      ic.className = "chip" + (im.warn ? " err" : "");
+      ic.innerHTML = '<span class="dot"></span><span class="n"></span>';
+      ic.querySelector(".dot").style.background = im.color;
+      ic.querySelector(".n").textContent = im.account.username + " · IMAP" + (im.warn ? " — " + im.warn : "");
+      ic.title = "Checked by the helper on your Mac every 15 minutes";
+      box.appendChild(ic);
+    }
     var f = $("filters");
     f.innerHTML = "";
     var srcs = sources();
@@ -196,6 +204,24 @@
       untrack: function (id) { return host.engine.gmailAction(id, "untrack", true); }
     };
   }
+  function imapSource() {
+    var host = engines.find(function (x) { return !!x.engine.imap(); });
+    var d = host && host.engine.imap();
+    if (!d) return null;
+    var stale = d.lastRun && (Date.now() - new Date(d.lastRun).getTime() > 60 * 60 * 1000);
+    var warn = d.error ? d.error : (stale ? "helper last ran " + fmtWhen(d.lastRun) + " (is your Mac on?)" : "");
+    return {
+      account: { username: d.account || "IMAP" }, color: "#0b8a8a", host: host, warn: warn, queued: d.queued,
+      items: (d.items || []).map(function (it) { return Object.assign({ c: it.id }, it); }),
+      setDone: function (id, done) { return host.engine.imapAction(id, done ? "done" : "undone", true); },
+      untrack: function (id) { return host.engine.imapAction(id, "untrack", true); }
+    };
+  }
+  function fmtWhen(iso) {
+    var d = new Date(iso);
+    return d.toLocaleDateString(undefined, { day: "numeric", month: "short" }) + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+
   function sources() {
     var list = engines.map(function (x) {
       return { account: x.account, color: x.color, items: x.engine.load().items,
@@ -204,6 +230,8 @@
     });
     var g = gmailSource();
     if (g) list.push(g);
+    var im = imapSource();
+    if (im) list.push(im);
     return list;
   }
 
@@ -244,7 +272,7 @@
         tag.textContent = x.account.username.split("@")[1] || x.account.username;
         meta.appendChild(tag);
       }
-      meta.appendChild(document.createTextNode(describe(e)));
+      meta.appendChild(document.createTextNode(describe(e) + (e.pending ? " · updating within 15 min" : "")));
       if (e.lp) {
         var lp = document.createElement("span");
         lp.className = "latest";
