@@ -5,6 +5,9 @@ window.FUSync = (function () {
   var GRAPH = "https://graph.microsoft.com/v1.0";
   var KEY = "fu.v1";
   var PRUNE_ANSWERED_DAYS = 90;
+  var STORE_VERSION = 3;
+  // Hidden property on each reminder event that links it to its conversation.
+  var CONV_PROP = "String {00020329-0000-0000-C000-000000000046} Name FollowUpConversationId";
 
   /* ---------- store ---------- */
   // Entry: { c: conversationId, s: subject, st: 'waiting'|'answered'|'new', fm: flagged message id,
@@ -74,7 +77,7 @@ window.FUSync = (function () {
 
   async function conversationMessages(conversationId, ctx, interactive) {
     var filter = encodeURIComponent("conversationId eq '" + conversationId.replace(/'/g, "''") + "'");
-    var url = "/me/messages?$filter=" + filter + "&$select=id,subject,from,sentDateTime,isDraft,parentFolderId,webLink,categories&$top=100";
+    var url = "/me/messages?$filter=" + filter + "&$select=id,subject,from,sentDateTime,isDraft,parentFolderId,webLink,categories,flag&$top=100";
     var out = [];
     while (url) {
       var page = await graph("GET", url, null, interactive);
@@ -111,7 +114,8 @@ window.FUSync = (function () {
         "<p><i>Created by the Follow-up add-in. It is removed automatically when a reply arrives.</i></p>" },
       start: utc(due), end: utc(end),
       isReminderOn: true, reminderMinutesBeforeStart: 0,
-      showAs: "free", categories: [cfg.category]
+      showAs: "free", categories: [cfg.category],
+      singleValueExtendedProperties: [{ id: CONV_PROP, value: entry.c }]
     };
   }
 
@@ -147,10 +151,35 @@ window.FUSync = (function () {
     }
   }
 
-  async function syncEntry(entry, data, ctx, interactive) {
-    var msgs = await conversationMessages(entry.c, ctx, interactive);
-    var result = FUCore.applyManual(entry, FUCore.computeState(msgs));
+  function hasCategory(msgs) {
+    return msgs.some(function (m) { return (m.categories || []).indexOf(cfg.category) >= 0; });
+  }
+
+  /** Puts the Follow-up category on one message of the conversation, so the mailbox itself records that it's tracked. */
+  async function markConversation(msgs, interactive) {
+    if (hasCategory(msgs)) return;
+    var real = msgs.filter(function (m) { return !m.isDraft; })
+      .sort(function (a, b) { return new Date(b.sentDateTime) - new Date(a.sentDateTime); });
+    var target = real.find(function (m) { return m.isMine; }) || real[0];
+    if (!target) return;
+    var cats = (target.categories || []).concat([cfg.category]);
+    await graph("PATCH", "/me/messages/" + target.id, { categories: cats }, interactive);
+    target.categories = cats;
+  }
+
+  async function syncEntry(entry, data, ctx, interactive, msgs) {
+    msgs = msgs || await conversationMessages(entry.c, ctx, interactive);
+    var result = FUCore.computeState(msgs);
     if (result.state === "empty") return;
+    // Outlook's own flag is the truth for "done by hand": a ✓ on my latest email while no reply has come in.
+    var f = result.state === "waiting" && result.anchor.flag;
+    if (f && f.flagStatus === "complete") {
+      entry.m = (f.completedDateTime && f.completedDateTime.dateTime ? f.completedDateTime.dateTime.replace(/(\.\d{3})\d*/, "$1").replace(/Z?$/, "Z") : null) || entry.m || new Date().toISOString();
+      if (new Date(entry.m) < new Date(result.anchor.sentDateTime)) entry.m = result.anchor.sentDateTime;
+    } else {
+      delete entry.m;
+    }
+    result = FUCore.applyManual(entry, result);
     var opts = { days: Number(data.settings.days) || 14, reminderTime: data.settings.reminderTime };
     if (result.anchor) entry.w = result.anchor.webLink;
     var newest = msgs.filter(function (m) { return !m.isDraft; }).map(function (m) { return m.sentDateTime; }).sort().pop();
@@ -162,17 +191,77 @@ window.FUSync = (function () {
     entry.t = newest || entry.t;
   }
 
-  /** Picks up emails you tagged while composing (they carry the Follow-up category in Sent Items). */
-  async function adoptTaggedSent(data, interactive) {
-    var since = new Date(Date.now() - 60 * 86400000).toISOString();
-    var filter = encodeURIComponent("categories/any(c:c eq '" + cfg.category + "') and sentDateTime ge " + since);
-    var res = await graph("GET", "/me/mailFolders/sentitems/messages?$filter=" + filter + "&$select=id,conversationId,subject,sentDateTime&$top=100", null, interactive);
-    (res.value || []).forEach(function (m) {
-      if (!m.conversationId) return;
-      if (data.ignored.indexOf(m.conversationId) >= 0) return;
-      if (data.items.some(function (e) { return e.c === m.conversationId; })) return;
-      data.items.push({ c: m.conversationId, s: (m.subject || "").slice(0, 80), st: "new", t: m.sentDateTime });
-    });
+  function addEntry(data, conversationId, subject, when) {
+    if (!conversationId || data.ignored.indexOf(conversationId) >= 0) return null;
+    var found = data.items.find(function (e) { return e.c === conversationId; });
+    if (found) return found;
+    var entry = { c: conversationId, s: (subject || "").slice(0, 80), st: "new", t: when };
+    data.items.push(entry);
+    return entry;
+  }
+
+  /** Every conversation with a Follow-up category (tagged while composing, or tracked on any device). */
+  async function adoptTagged(data, interactive) {
+    var since = new Date(Date.now() - 120 * 86400000).toISOString();
+    var filter = encodeURIComponent("categories/any(c:c eq '" + cfg.category + "') and receivedDateTime ge " + since);
+    var url = "/me/messages?$filter=" + filter + "&$select=id,conversationId,subject,sentDateTime&$top=100";
+    var pages = 0;
+    while (url && pages++ < 5) {
+      var res = await graph("GET", url, null, interactive);
+      (res.value || []).forEach(function (m) { addEntry(data, m.conversationId, m.subject, m.sentDateTime); });
+      url = res["@odata.nextLink"] || null;
+    }
+  }
+
+  /** Finds the add-in's reminder events. Returns { conversationId: [eventId, ...] } and adopts conversations that only have a reminder. */
+  async function reminderEvents(data, interactive) {
+    var start = new Date(Date.now() - 60 * 86400000).toISOString();
+    var end = new Date(Date.now() + 130 * 86400000).toISOString();
+    var url = "/me/calendarView?startDateTime=" + start + "&endDateTime=" + end +
+      "&$select=id,subject,categories,body&$top=200&$expand=singleValueExtendedProperties($filter=" + encodeURIComponent("id eq '" + CONV_PROP + "'") + ")";
+    var map = {};
+    var pages = 0;
+    while (url && pages++ < 10) {
+      var res = await graph("GET", url, null, interactive);
+      for (var i = 0; i < (res.value || []).length; i++) {
+        var ev = res.value[i];
+        if ((ev.categories || []).indexOf(cfg.category) < 0 || !/^Follow up: /.test(ev.subject || "")) continue;
+        var prop = (ev.singleValueExtendedProperties || [])[0];
+        var conv = prop && prop.value;
+        if (!conv) conv = await conversationFromEventBody(ev, interactive); // reminders made by version 1.0–1.2
+        if (!conv) continue;
+        (map[conv] = map[conv] || []).push(ev.id);
+        addEntry(data, conv, (ev.subject || "").replace(/^Follow up: /, ""), null);
+      }
+      url = res["@odata.nextLink"] || null;
+    }
+    return map;
+  }
+
+  async function conversationFromEventBody(ev, interactive) {
+    var html = (ev.body && ev.body.content) || "";
+    var m = html.match(/ItemID=([^&"'\s<]+)/i);
+    if (!m) return null;
+    var raw = decodeURIComponent(m[1]);
+    var candidates = [raw, raw.replace(/\//g, "-").replace(/\+/g, "_")];
+    for (var i = 0; i < candidates.length; i++) {
+      try {
+        var msg = await graph("GET", "/me/messages/" + encodeURIComponent(candidates[i]) + "?$select=conversationId", null, interactive);
+        if (msg && msg.conversationId) {
+          await graph("PATCH", "/me/events/" + ev.id, { singleValueExtendedProperties: [{ id: CONV_PROP, value: msg.conversationId }] }, interactive).catch(function () {});
+          return msg.conversationId;
+        }
+      } catch (e) { /* try next form */ }
+    }
+    try {
+      var tr = await graph("POST", "/me/translateExchangeIds", { inputIds: [raw], sourceIdType: "ewsId", targetIdType: "restId" }, interactive);
+      var rid = tr && tr.value && tr.value[0] && tr.value[0].targetId;
+      if (rid) {
+        var msg2 = await graph("GET", "/me/messages/" + encodeURIComponent(rid) + "?$select=conversationId", null, interactive);
+        return msg2 && msg2.conversationId;
+      }
+    } catch (e) { /* give up */ }
+    return null;
   }
 
   var running = null;
@@ -181,16 +270,41 @@ window.FUSync = (function () {
     if (running) return running;
     running = (async function () {
       var data = load();
+      var migrating = (data.v || 1) < STORE_VERSION;
       var errors = [];
       try {
         var ctx = await context(interactive);
-        await adoptTaggedSent(data, interactive);
+        await adoptTagged(data, interactive);
+        var events = await reminderEvents(data, interactive);
+        var keep = [];
         for (var i = 0; i < data.items.length; i++) {
-          try { await syncEntry(data.items[i], data, ctx, interactive); }
-          catch (e) { if (e.code === "SIGNIN_REQUIRED") throw e; errors.push((data.items[i].s || "email") + ": " + e.message); }
+          var entry = data.items[i];
+          try {
+            // One reminder per conversation: reuse the one that exists, delete duplicates.
+            var evs = events[entry.c] || [];
+            if (evs.length) {
+              if (evs.indexOf(entry.e) < 0) entry.e = evs[0];
+              for (var j = 0; j < evs.length; j++) if (evs[j] !== entry.e) await graph("DELETE", "/me/events/" + evs[j], null, interactive);
+            }
+            var msgs = await conversationMessages(entry.c, ctx, interactive);
+            if (!hasCategory(msgs)) {
+              if (!migrating && entry.st !== "new") { // stopped tracking on another device
+                if (entry.e) await graph("DELETE", "/me/events/" + entry.e, null, interactive);
+                continue;
+              }
+              await markConversation(msgs, interactive);
+            }
+            await syncEntry(entry, data, ctx, interactive, msgs);
+            keep.push(entry);
+          } catch (e) {
+            if (e.code === "SIGNIN_REQUIRED") throw e;
+            keep.push(entry);
+            errors.push((entry.s || "email") + ": " + e.message);
+          }
         }
         var cutoff = Date.now() - PRUNE_ANSWERED_DAYS * 86400000;
-        data.items = data.items.filter(function (e) { return !(e.st === "answered" && new Date(e.t).getTime() < cutoff); });
+        data.items = keep.filter(function (e) { return !(e.st === "answered" && new Date(e.t).getTime() < cutoff); });
+        data.v = STORE_VERSION;
         data.lastSync = new Date().toISOString();
         await save(data);
         return { ok: true, errors: errors };
@@ -205,10 +319,11 @@ window.FUSync = (function () {
   async function track(conversationId, subject, interactive) {
     var data = load();
     data.ignored = data.ignored.filter(function (c) { return c !== conversationId; });
-    var entry = data.items.find(function (e) { return e.c === conversationId; });
-    if (!entry) { entry = { c: conversationId, s: (subject || "").slice(0, 80), st: "new" }; data.items.push(entry); }
+    var entry = addEntry(data, conversationId, subject, null);
     var ctx = await context(interactive);
-    await syncEntry(entry, data, ctx, interactive);
+    var msgs = await conversationMessages(conversationId, ctx, interactive);
+    await markConversation(msgs, interactive);
+    await syncEntry(entry, data, ctx, interactive, msgs);
     await save(data);
     return entry;
   }
@@ -236,14 +351,22 @@ window.FUSync = (function () {
     await save(data);
   }
 
-  /** done=true: you tick it off yourself. done=false: back to waiting. */
+  /** done=true: you tick it off yourself (✓ on Outlook's flag). done=false: back to waiting. */
   async function setDone(conversationId, done, interactive) {
     var data = load();
     var entry = data.items.find(function (e) { return e.c === conversationId; });
     if (!entry) return;
-    if (done) entry.m = new Date().toISOString(); else delete entry.m;
     var ctx = await context(interactive);
-    await syncEntry(entry, data, ctx, interactive);
+    var msgs = await conversationMessages(conversationId, ctx, interactive);
+    var anchor = FUCore.computeState(msgs).anchor;
+    if (anchor && anchor.isMine) {
+      var now = new Date().toISOString();
+      var flag = done ? { flagStatus: "complete", completedDateTime: { dateTime: now.replace(/Z$/, ""), timeZone: "UTC" } } : { flagStatus: "notFlagged" };
+      await graph("PATCH", "/me/messages/" + anchor.id, { flag: flag }, interactive);
+      anchor.flag = done ? { flagStatus: "complete", completedDateTime: { dateTime: now } } : flag;
+    }
+    if (!done) { entry.st = "new"; entry.fm = null; } // fresh flag + reminder
+    await syncEntry(entry, data, ctx, interactive, msgs);
     await save(data);
   }
 
