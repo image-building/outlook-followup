@@ -60,7 +60,17 @@ The first time you open the add-in it asks you to sign in once.
 ## Online overview (all mailboxes)
 Open **https://image-building.github.io/outlook-followup/** in any browser (also Safari on iPhone — use *Share → Add to Home Screen* for an app icon). Sign in with each Microsoft 365 account (**+ Add account**). You get one combined list with a filter per mailbox; it checks for replies when opened and every 5 minutes while open. Tick boxes and ✕ work the same as in Outlook.
 
-## Gmail
+## IMAP account (e.g. philip@codeyellow.nl) — helper on your Mac
+Flag an email in your **Sent** folder (Outlook on the Mac, iPhone Mail, any app — flags sync over IMAP) to track it. A small helper on your Mac checks every 15 minutes, puts the reminders in your Imagebuilding calendar and shows the list on the overview page (teal label). Tick/✕ on the page are carried out by the helper on its next run.
+
+One-time setup:
+1. Entra app → **Authentication → Settings** → **Allow public client flows: Yes** → Save. (Lets the helper sign in with a code.)
+2. Download `imap-helper.zip`, unzip it in Downloads, open **Terminal** and run: `bash ~/Downloads/imap-helper/install.sh`
+3. Enter the IMAP server, your address and password (stored in the macOS Keychain), then sign in with your **Imagebuilding** account when the browser opens.
+
+Log: `~/Library/Application Support/FollowUpImap/helper.log` · Remove: `bash ~/Downloads/imap-helper/uninstall.sh`
+
+## Gmail (alternative, not in use)
 Tag a Gmail email with the label **Follow-up** (web or Gmail app). A small Google Apps Script in your Gmail account checks those threads every 15 minutes; answered threads get the label **Follow-up/Answered**. The Gmail follow-ups appear on the overview page, and their reminders go into your Imagebuilding Outlook calendar.
 
 Setup (once, ~10 minutes, signed in to Google as your Gmail account):
