@@ -57,10 +57,20 @@ The first time you open the add-in it asks you to sign in once.
 - **iPhone:** open an email (e.g. in Sent Items) → tap the **Apps** icon (or `…`) → **Follow-up**. You can track/untrack and see the list; tagging while composing is desktop-only.
 - **Settings** in the pane let you change 14 days and the 09:00 reminder time.
 
+## Online overview (all mailboxes)
+Open **https://image-building.github.io/outlook-followup/** in any browser (also Safari on iPhone — use *Share → Add to Home Screen* for an app icon). Sign in with each Microsoft 365 account (**+ Add account**). You get one combined list with a filter per mailbox; it checks for replies when opened and every 5 minutes while open. Tick boxes and ✕ work the same as in Outlook.
+
+## Adding another Microsoft 365 organisation
+1. Entra app → **Authentication → Supported accounts** → *Accounts in any organizational directory (multitenant)*.
+2. As admin of the other organisation, open the admin-consent link (see below) in a private window and approve.
+3. Install `manifest.xml` in that mailbox via https://aka.ms/olksideload (signed in as that mailbox).
+
+Admin consent link: `https://login.microsoftonline.com/organizations/adminconsent?client_id=<client-id>&redirect_uri=https://image-building.github.io/outlook-followup/`
+
 ## Good to know
 - **Replies are checked when the pane is open** (on open, on every email you click while it's pinned — at most every 3 minutes — and with *Sync*). Outlook add-ins can't run fully in the background. If a reply came in while the pane was closed, the flag updates the next time it opens; if a reminder fires for something already answered, just open the pane and it clears itself. A fully background version is possible with a small Power Automate flow or Azure Function if you want that later.
 - **Why a calendar reminder instead of a flag reminder:** classic Outlook doesn't fire flag reminders for emails in Sent Items. A calendar reminder works on Windows, Mac and your phone. It's marked *Free*, so it doesn't block your agenda.
-- The tracking list is stored in your mailbox (Outlook "roaming settings"), so it's the same on every device. Answered emails drop off the list after 90 days.
+- Everything lives in your mailbox: the **Follow-up** category marks tracked conversations, the flag holds waiting/done, and your settings are stored in the mailbox too — so the add-in on every device and the web page always agree. Answered emails drop off the list after 90 days.
 - Tagging while composing uses an Outlook category called **Follow-up**; the add-in creates it the first time.
 
 ## Files

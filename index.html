@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Follow-ups</title>
+  <link rel="icon" href="assets/icon-32.png" />
+  <link rel="apple-touch-icon" href="assets/icon-128.png" />
+  <script src="src/lib/msal-browser.min.js"></script>
+  <script src="src/config.js?v=1.4"></script>
+  <script src="src/core.js?v=1.4"></script>
+  <script src="src/sync.js?v=1.4"></script>
+  <link rel="stylesheet" href="src/taskpane.css?v=1.4" />
+  <link rel="stylesheet" href="src/overview.css?v=1.4" />
+</head>
+<body class="overview">
+  <header>
+    <h1>Follow-ups</h1>
+    <div class="actions">
+      <button id="syncBtn" title="Check all mailboxes for replies">Sync</button>
+    </div>
+  </header>
+
+  <section id="welcome" class="card hidden">
+    <p><b>Sign in with your Microsoft 365 accounts</b> to see every email you're waiting on, across all of them, in one list.</p>
+    <button id="signinBtn" class="primary">Sign in</button>
+  </section>
+
+  <section id="accounts" class="accounts hidden">
+    <div id="accountChips" class="chips"></div>
+    <button id="addAccountBtn" class="ghost small">+ Add account</button>
+  </section>
+
+  <section id="lists" class="hidden">
+    <div class="filters" id="filters"></div>
+    <h2>Waiting for a reply <span id="waitingCount" class="count"></span></h2>
+    <ul id="waitingList" class="list"></ul>
+    <h2>Answered <span id="answeredCount" class="count"></span></h2>
+    <ul id="answeredList" class="list"></ul>
+  </section>
+
+  <footer id="footer"></footer>
+  <script src="src/overview.js?v=1.4"></script>
+</body>
+</html>
