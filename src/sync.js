@@ -40,15 +40,15 @@ window.FUEngine = function (opts) {
   }
 
   /* ---------- graph ---------- */
-  async function graph(method, path, body, interactive) {
+  async function graph(method, path, body, interactive, extraHeaders) {
     var token = await opts.getToken(interactive);
     for (var attempt = 0; attempt < 3; attempt++) {
       var res = await fetch(path.indexOf("http") === 0 ? path : GRAPH + path, {
         method: method,
-        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        headers: Object.assign({ Authorization: "Bearer " + token, "Content-Type": "application/json" }, extraHeaders || {}),
         body: body ? JSON.stringify(body) : undefined
       });
-      if (res.status === 429 || res.status === 503) {
+      if (res.status === 429 || res.status === 503 || ((res.status === 502 || res.status === 504) && method !== "POST" && attempt < 2)) {
         var wait = (parseInt(res.headers.get("Retry-After"), 10) || 2) * 1000;
         await new Promise(function (r) { setTimeout(r, wait); });
         continue;
@@ -89,17 +89,42 @@ window.FUEngine = function (opts) {
   }
 
   var lastImap = null; // { account, lastRun, items, error } from the IMAP helper
+  var DATA_FOLDER = "Follow-up data", dataFolderId = null;
+  async function dataFolder(interactive, create) {
+    if (dataFolderId) return dataFolderId;
+    var res = await graph("GET", "/me/mailFolders?includeHiddenFolders=true&$filter=" + encodeURIComponent("displayName eq '" + DATA_FOLDER + "'") + "&$select=id,displayName", null, interactive);
+    var f = ((res && res.value) || []).find(function (x) { return x.displayName === DATA_FOLDER; });
+    if (f) return (dataFolderId = f.id);
+    if (!create) return null;
+    return (dataFolderId = (await graph("POST", "/me/mailFolders", { displayName: DATA_FOLDER, isHidden: true }, interactive)).id);
+  }
+  /** The IMAP helper keeps its list and the action queue as drafts in a hidden folder ("blobs"). */
+  async function readBlob(name, interactive) {
+    var fid = await dataFolder(interactive, false);
+    if (!fid) return { id: null, value: null };
+    var res = await graph("GET", "/me/mailFolders/" + fid + "/messages?$filter=" + encodeURIComponent("subject eq '" + name + "'") + "&$select=id,subject,body&$top=5",
+      null, interactive, { Prefer: 'outlook.body-content-type="text"' });
+    var m = ((res && res.value) || []).find(function (x) { return x.subject === name; });
+    if (!m) return { id: null, value: null };
+    try { return { id: m.id, value: JSON.parse((m.body && m.body.content) || "null") }; } catch (e) { return { id: m.id, value: null }; }
+  }
+  async function writeBlob(name, value, id, interactive) {
+    var body = { contentType: "text", content: JSON.stringify(value) };
+    if (id && await graph("PATCH", "/me/messages/" + id, { body: body }, interactive) !== null) return id;
+    var fid = await dataFolder(interactive, true);
+    return (await graph("POST", "/me/mailFolders/" + fid + "/messages", { subject: name, body: body, isRead: true }, interactive)).id;
+  }
   async function readRootProps(interactive) {
-    var flt = "id eq '" + SETTINGS_PROP + "' or id eq '" + IMAP_PROP + "' or id eq '" + QUEUE_PROP + "'";
-    var f = await graph("GET", "/me/mailFolders/msgfolderroot?$select=id&$expand=singleValueExtendedProperties($filter=" + encodeURIComponent(flt) + ")", null, interactive);
     var out = {};
-    ((f && f.singleValueExtendedProperties) || []).forEach(function (p) {
-      var id = (p.id || "").toLowerCase(), v = null;
-      try { v = JSON.parse(p.value); } catch (e) { v = null; }
-      if (/name followupsettings$/.test(id)) out.settings = v;
-      else if (/name followupimap$/.test(id)) out.imap = v;
-      else if (/name followupimapactions$/.test(id)) out.queue = v;
-    });
+    try {
+      var f = await graph("GET", "/me/mailFolders/msgfolderroot?$select=id&$expand=singleValueExtendedProperties($filter=" + encodeURIComponent("id eq '" + SETTINGS_PROP + "'") + ")", null, interactive);
+      var p = ((f && f.singleValueExtendedProperties) || [])[0];
+      if (p) out.settings = JSON.parse(p.value);
+    } catch (e) { if (e.code === "SIGNIN_REQUIRED") throw e; console.warn("settings", e); }
+    try {
+      var l = await readBlob("FollowUpImap", interactive); out.imap = l.value;
+      var q = await readBlob("FollowUpImapActions", interactive); out.queue = q.value; out.queueId = q.id;
+    } catch (e) { if (e.code === "SIGNIN_REQUIRED") throw e; console.warn("imap list", e); }
     return out;
   }
   async function readMailboxSettings(interactive) {
@@ -126,7 +151,7 @@ window.FUEngine = function (opts) {
   async function imapAction(id, action, interactive) {
     var r = await readRootProps(interactive);
     var queue = (r.queue || []).concat([{ id: id, action: action, at: new Date().toISOString() }]);
-    await graph("PATCH", "/me/mailFolders/msgfolderroot", { singleValueExtendedProperties: [{ id: QUEUE_PROP, value: JSON.stringify(queue) }] }, interactive);
+    await writeBlob("FollowUpImapActions", queue, r.queueId, interactive);
     lastImap = r.imap ? applyQueue(r.imap, queue) : null;
   }
   async function writeMailboxSettings(settings, interactive) {
@@ -451,6 +476,15 @@ window.FUEngine = function (opts) {
     }
   }
 
+  var checkedOnce = {};
+  async function findEventsByKey(key, interactive) {
+    var flt = "singleValueExtendedProperties/Any(ep: ep/id eq '" + CONV_PROP + "' and ep/value eq '" + String(key).replace(/'/g, "''") + "')";
+    try {
+      var res = await graph("GET", "/me/events?$filter=" + encodeURIComponent(flt) + "&$select=id&$top=100", null, interactive);
+      return ((res && res.value) || []).map(function (e) { return e.id; });
+    } catch (e) { if (e.code === "SIGNIN_REQUIRED") throw e; console.warn("event lookup", e); return []; }
+  }
+
   var running = null;
   /** Full sync. Returns { ok, errors, needsSignIn }. */
   function syncAll(interactive) {
@@ -472,7 +506,12 @@ window.FUEngine = function (opts) {
           var entry = data.items[i];
           try {
             // One reminder per conversation: reuse the one that exists, delete duplicates.
-            var evs = events[entry.c] || [];
+            var evs = (events[entry.c] || []).slice();
+            if (!entry.e || entry.st !== "answered" || !checkedOnce[entry.c]) { // look it up directly (the calendar list doesn't always return the link)
+              (await findEventsByKey(entry.c, interactive)).forEach(function (id) { if (evs.indexOf(id) < 0) evs.push(id); });
+              checkedOnce[entry.c] = true;
+            }
+            if (entry.e && evs.indexOf(entry.e) >= 0) evs.sort(function (a, b) { return (a === entry.e ? -1 : 0) - (b === entry.e ? -1 : 0); });
             if (evs.length) {
               if (evs.indexOf(entry.e) < 0) entry.e = evs[0];
               for (var j = 0; j < evs.length; j++) if (evs[j] !== entry.e) await graph("DELETE", "/me/events/" + evs[j], null, interactive);
