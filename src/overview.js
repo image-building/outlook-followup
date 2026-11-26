@@ -17,7 +17,14 @@
       cache: { cacheLocation: "localStorage" }
     });
     await pca.initialize();
-    await pca.handleRedirectPromise();
+    try {
+      await pca.handleRedirectPromise();
+      renewDone(true);
+    } catch (e) {
+      // a quiet renewal (prompt=none) that needs you to sign in: remember it and show "Sign in again"
+      renewDone(false);
+      console.warn("quiet sign-in renewal not possible", e && e.errorCode);
+    }
     $("signinBtn").onclick = addAccount;
     $("addAccountBtn").onclick = addAccount;
     $("syncBtn").onclick = function () { syncAll(); };
@@ -107,6 +114,36 @@
 
   /* ---------- sync ---------- */
   var syncing = false;
+  /* ---------- quiet sign-in renewal ----------
+   * Microsoft lets a web page keep its sign-in for 24 hours. After that, Safari blocks the hidden renewal, so we
+   * renew with a quick redirect to Microsoft and back (prompt=none: no login screen, no MFA, if your Microsoft
+   * session is remembered). Tried at most once per account per hour, so it can never loop. */
+  function ssGet(k, d) { try { return JSON.parse(sessionStorage.getItem(k)) || d; } catch (e) { return d; } }
+  function ssSet(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignore */ } }
+  function renewDone(ok) {
+    var who = ssGet("fu:renewing", null);
+    if (!who) return;
+    ssSet("fu:renewing", null);
+    var failed = ssGet("fu:renewFailed", {});
+    if (ok) delete failed[who]; else failed[who] = Date.now();
+    ssSet("fu:renewFailed", failed);
+  }
+  function tryQuietRenewal() {
+    var tried = ssGet("fu:renewTried", {}), failed = ssGet("fu:renewFailed", {});
+    var hour = 60 * 60 * 1000;
+    var x = engines.find(function (e) {
+      var u = e.account.username;
+      return signInNeeded[u] && !(failed[u] && Date.now() - failed[u] < hour) && !(tried[u] && Date.now() - tried[u] < hour);
+    });
+    if (!x) return false;
+    tried[x.account.username] = Date.now();
+    ssSet("fu:renewTried", tried);
+    ssSet("fu:renewing", x.account.username);
+    status("Refreshing your sign-in for " + x.account.username + "…");
+    pca.acquireTokenRedirect({ scopes: cfg.scopes, account: x.account, loginHint: x.account.username, prompt: "none" });
+    return true;
+  }
+
   async function syncAll() {
     if (syncing || !engines.length) return;
     syncing = true;
@@ -124,6 +161,7 @@
     renderAccounts();
     render();
     status(errors.join(" · "), errors.length > 0);
+    if (!document.hidden) tryQuietRenewal();
   }
 
   /* ---------- render ---------- */
