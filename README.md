@@ -60,6 +60,9 @@ The first time you open the add-in it asks you to sign in once.
 ## Online overview (all mailboxes)
 Open **https://image-building.github.io/outlook-followup/** in any browser (also Safari on iPhone — use *Share → Add to Home Screen* for an app icon). Sign in with each Microsoft 365 account (**+ Add account**). You get one combined list with a filter per mailbox; it checks for replies when opened and every 5 minutes while open. Tick boxes and ✕ work the same as in Outlook.
 
+## Follow-ups page in Safari without signing in (http://localhost:47200)
+The helper on your Mac also serves the Follow-ups page at **http://localhost:47200** (bookmark it). It uses the helper's own Microsoft sign-in, which renews itself, so Safari never asks you to log in. It always shows the latest version from GitHub. To add another account (e.g. info@industrialdesignengineer.com) click **+ Add account** — a browser window opens to sign in once. This needs the redirect URI `http://localhost` under **Mobile and desktop applications** in the Entra app.
+
 ## IMAP account (e.g. philip@codeyellow.nl) — helper on your Mac
 Flag an email in your **Sent** folder (Outlook on the Mac, iPhone Mail, any app — flags sync over IMAP) to track it. A small helper on your Mac checks every 15 minutes, puts the reminders in your Imagebuilding calendar and shows the list on the overview page (teal label). Tick/✕ on the page are carried out by the helper on its next run.
 
