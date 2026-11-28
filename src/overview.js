@@ -8,10 +8,40 @@
   var pca, engines = [], filter = "all", lastSync = 0, signInNeeded = {};
 
   var redirectUri = cfg.baseUrl + "/";
+  // Local mode: the page is served by the helper on your Mac (http://localhost:47200) and gets its sign-in from it,
+  // so Safari never has to keep a Microsoft session.
+  var LOCAL = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && location.port === "47200";
+  var localAccounts = [], localTokens = {};
 
   init().catch(function (e) { status(e.message, true); });
 
+  async function api(path, body) {
+    var res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Follow-Up": "1" }, body: JSON.stringify(body || {}) });
+    var json = await res.json().catch(function () { return {}; });
+    if (!res.ok) { var err = new Error(json.error || ("Helper error " + res.status)); err.status = res.status; throw err; }
+    return json;
+  }
+  async function loadLocalAccounts() {
+    var r = await api("/api/accounts");
+    localAccounts = (r.accounts || []).filter(Boolean).map(function (u) { return { homeAccountId: "local:" + u, username: u }; });
+    return r;
+  }
+
   async function init() {
+    if (LOCAL) {
+      document.title = "Follow-ups";
+      $("signinBtn").onclick = addAccount;
+      $("addAccountBtn").onclick = addAccount;
+      $("syncBtn").onclick = function () { syncAll(); };
+      try { await loadLocalAccounts(); } catch (e) { status("The helper on your Mac isn't answering: " + e.message, true); }
+      setup();
+      if (engines.length) syncAll();
+      setInterval(function () { if (!document.hidden) syncAll(); }, AUTO_MS);
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden && Date.now() - lastSync > 2 * 60 * 1000) syncAll();
+      });
+      return;
+    }
     pca = new msal.PublicClientApplication({
       auth: { clientId: cfg.clientId, authority: cfg.authority, redirectUri: redirectUri },
       cache: { cacheLocation: "localStorage" }
@@ -37,6 +67,7 @@
   }
 
   function accounts() {
+    if (LOCAL) return localAccounts.slice();
     // One entry per mailbox (MSAL can list the same person once per organisation).
     var seen = {};
     return pca.getAllAccounts().filter(function (a) {
@@ -70,6 +101,17 @@
   }
 
   async function token(account, interactive) {
+    if (LOCAL) {
+      var c = localTokens[account.username];
+      if (c && c.exp > Date.now() + 60000) return c.token;
+      try {
+        var r = await api("/api/token", { username: account.username });
+        localTokens[account.username] = { token: r.accessToken, exp: r.expiresOn };
+        return r.accessToken;
+      } catch (e) {
+        var se = new Error("Sign-in required: " + e.message); se.code = "SIGNIN_REQUIRED"; throw se;
+      }
+    }
     var req = { scopes: cfg.scopes, account: account };
     try {
       return (await pca.acquireTokenSilent(req)).accessToken;
@@ -98,7 +140,24 @@
     renderAccounts(); render();
   }
 
+  async function addAccountLocal() {
+    var before = localAccounts.map(function (a) { return a.username; });
+    try { await api("/api/signin"); } catch (e) { status(e.message, true); return; }
+    status("A browser window opened on your Mac — sign in there with the account to add, then come back here.");
+    var until = Date.now() + 5 * 60 * 1000;
+    while (Date.now() < until) {
+      await new Promise(function (r) { setTimeout(r, 3000); });
+      var r = await loadLocalAccounts().catch(function () { return null; });
+      if (!r) continue;
+      if (r.signin && r.signin.error) { status("Sign-in failed: " + r.signin.error, true); return; }
+      var added = localAccounts.some(function (a) { return before.indexOf(a.username) < 0; });
+      if (added || (r.signin && !r.signin.running && r.signin.last)) { status(""); setup(); syncAll(); return; }
+    }
+    status("Sign-in timed out — try + Add account again.", true);
+  }
+
   function addAccount() {
+    if (LOCAL) return addAccountLocal();
     pca.loginRedirect({ scopes: cfg.scopes, prompt: "select_account" });
   }
 
@@ -107,7 +166,11 @@
     try {
       Object.keys(localStorage).forEach(function (k) { if (k.indexOf("fu:" + acc.homeAccountId + ":") === 0) localStorage.removeItem(k); });
     } catch (e) { /* ignore */ }
-    await pca.clearCache({ account: acc });
+    if (LOCAL) {
+      try { await api("/api/remove", { username: acc.username }); await loadLocalAccounts(); } catch (e) { status(e.message, true); return; }
+    } else {
+      await pca.clearCache({ account: acc });
+    }
     if (filter === acc.username) filter = "all";
     setup();
   }
@@ -129,6 +192,7 @@
     ssSet("fu:renewFailed", failed);
   }
   function tryQuietRenewal() {
+    if (LOCAL) return false;
     var tried = ssGet("fu:renewTried", {}), failed = ssGet("fu:renewFailed", {});
     var hour = 60 * 60 * 1000;
     var x = engines.find(function (e) {
@@ -175,7 +239,10 @@
       chip.innerHTML = '<span class="dot"></span><span class="n"></span>' + (needs ? '<button class="re">Sign in again</button>' : "") + '<button class="rm" title="Remove from this page">✕</button>';
       chip.querySelector(".dot").style.background = x.color;
       chip.querySelector(".n").textContent = x.account.username;
-      if (needs) chip.querySelector(".re").onclick = function () { token(x.account, true); };
+      if (needs) chip.querySelector(".re").onclick = function () {
+        if (LOCAL) { addAccount(); return; } // signs that account in again through the helper
+        token(x.account, true);
+      };
       chip.querySelector(".rm").onclick = function () { removeAccount(x.account); };
       box.appendChild(chip);
     });
