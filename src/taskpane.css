@@ -47,3 +47,5 @@ footer .err { color: var(--warn); }
   .list .x { padding: 4px 10px; font-size: 16px; }
   .list .box { flex-basis: 24px; width: 24px; height: 24px; font-size: 15px; }
 }
+.tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; margin-right: 6px; color: #fff; vertical-align: 1px; }
+#imapNote { color: var(--warn); border-color: var(--warn); }

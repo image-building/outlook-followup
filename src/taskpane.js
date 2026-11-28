@@ -151,14 +151,27 @@
 
   function render() {
     var data = FUSync.load();
-    var waiting = data.items.filter(function (e) { return e.st !== "answered"; })
+    // codeyellow / IMAP follow-ups published by the helper on your Mac (only in the mailbox it writes to)
+    var imap = FUSync.imap && FUSync.imap();
+    var all = data.items.slice();
+    if (imap && imap.items) {
+      imap.items.forEach(function (it) { all.push(Object.assign({ c: it.id, _imap: true, _acct: imap.account }, it)); });
+    }
+    var waiting = all.filter(function (e) { return e.st !== "answered"; })
       .sort(function (a, b) { return new Date(a.d || 0) - new Date(b.d || 0); });
-    var answered = data.items.filter(function (e) { return e.st === "answered"; })
+    var answered = all.filter(function (e) { return e.st === "answered"; })
       .sort(function (a, b) { return new Date(b.t || 0) - new Date(a.t || 0); });
     fill("waitingList", waiting, "Nothing waiting. Tag a sent email to track it.");
     fill("answeredList", answered, "No answered emails yet.");
     $("waitingCount").textContent = waiting.length ? "(" + waiting.length + ")" : "";
     $("answeredCount").textContent = answered.length ? "(" + answered.length + ")" : "";
+    var note = $("imapNote");
+    if (note) {
+      var stale = imap && imap.lastRun && Date.now() - new Date(imap.lastRun).getTime() > 3600000;
+      note.textContent = !imap ? "" : imap.error ? (imap.account + ": " + imap.error)
+        : stale ? (imap.account + ": the helper on your Mac last checked " + new Date(imap.lastRun).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) + " — is your Mac on?") : "";
+      note.classList.toggle("hidden", !note.textContent);
+    }
     if (data.lastSync && !$("footer").querySelector(".err")) {
       $("footer").textContent = "Last checked " + new Date(data.lastSync).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     }
@@ -176,7 +189,14 @@
       li.innerHTML = '<button class="box" role="checkbox" aria-checked="' + done + '" title="' + (done ? "Mark as waiting again" : "Mark as done") + '">' + (done ? "✓" : "") + '</button><span class="t"></span><button class="x" title="Stop tracking">✕</button>';
       var t = li.querySelector(".t");
       t.textContent = e.s || "(no subject)";
-      var meta = document.createElement("span"); meta.className = "meta"; meta.textContent = describe(e); t.appendChild(meta);
+      var meta = document.createElement("span"); meta.className = "meta";
+      if (e._imap) {
+        var tag = document.createElement("span"); tag.className = "tag"; tag.style.background = "#0b8a8a";
+        tag.textContent = String(e._acct || "IMAP").split("@")[1] || "IMAP";
+        meta.appendChild(tag);
+      }
+      meta.appendChild(document.createTextNode(describe(e) + (e.pending ? " · updating within 15 min" : "")));
+      t.appendChild(meta);
       addLatest(t, e);
       t.onclick = function () { openEntry(e); };
       li.querySelector(".box").onclick = async function (ev) {
@@ -186,7 +206,8 @@
         box.textContent = done ? "" : "✓"; // instant feedback
         status(done ? "Moving back to waiting…" : "Marking as done…");
         try {
-          await FUSync.setDone(e.c, !done, true);
+          if (e._imap) await FUSync.imapAction(e.c, done ? "undone" : "done", true);
+          else await FUSync.setDone(e.c, !done, true);
           status("");
         } catch (err) { status(err.message, true); }
         render(); refreshCurrent();
@@ -194,7 +215,7 @@
       li.querySelector(".x").onclick = async function (ev) {
         ev.stopPropagation();
         status("Removing…");
-        try { await FUSync.untrack(e.c, true); status(""); } catch (err) { status(err.message, true); }
+        try { if (e._imap) await FUSync.imapAction(e.c, "untrack", true); else await FUSync.untrack(e.c, true); status(""); } catch (err) { status(err.message, true); }
         render(); refreshCurrent();
       };
       ul.appendChild(li);
@@ -215,6 +236,7 @@
   }
 
   function openEntry(e) {
+    if (e._imap) { copySubject(e.s || ""); return; } // an IMAP email can't be opened from here
     if (isMobile()) { copySubject(e.s || ""); return; } // Outlook for iOS/Android can't open another email from an add-in
     try {
       if (!isMobile() && e.fm && Office.context.mailbox.convertToEwsId) {
